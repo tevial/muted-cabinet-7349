@@ -95,6 +95,13 @@ function App() {
     saveProject(currentProject)
   }, [currentProject])
 
+  const stopPlayback = useCallback(() => {
+    audioRef.current?.pause()
+    activeSegmentRef.current = null
+    setLoopedGroupId(undefined)
+    setIsPlaying(false)
+  }, [])
+
   const setActiveGroups = (nextGroups: CaptionGroup[]) => {
     const normalizedGroups = normalizeGroupTimings(nextGroups)
     setGroups(normalizedGroups)
@@ -134,6 +141,7 @@ function App() {
   }
 
   const handleFileChange = async (nextFile: File) => {
+    stopPlayback()
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setFile(nextFile)
     setAudioFingerprint(undefined)
@@ -153,18 +161,21 @@ function App() {
   }
 
   const handleLoadSample = () => {
+    stopPlayback()
     setWords(sampleWords)
     setActiveGroups(groupWords(sampleWords, settings))
     setStatus('Sample words loaded for editing and SRT export.')
   }
 
   const handleRegroup = () => {
+    stopPlayback()
     setActiveGroups(groupWords(words, settings))
     setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
   }
 
   const handleTranscribe = async () => {
     if (!file) return
+    stopPlayback()
     setIsTranscribing(true)
     setStatus('Checking local transcription cache...')
 
@@ -308,13 +319,6 @@ function App() {
     setStatus('Looping selected group. Space stops playback.')
   }, [audioUrl, groups])
 
-  const stopLoopPlayback = useCallback(() => {
-    audioRef.current?.pause()
-    activeSegmentRef.current = null
-    setLoopedGroupId(undefined)
-    setIsPlaying(false)
-  }, [])
-
   const togglePlayback = async () => {
     const audio = audioRef.current
     if (!audioUrl || !audio) {
@@ -386,7 +390,7 @@ function App() {
       if (event.code === 'Space') {
         event.preventDefault()
         if (loopedGroupId) {
-          stopLoopPlayback()
+          stopPlayback()
           return
         }
 
@@ -433,7 +437,7 @@ function App() {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [groups, loopedGroupId, nudgeGroupEnd, nudgeGroupStart, selectedGroupId, startLoopGroup, stopLoopPlayback])
+  }, [groups, loopedGroupId, nudgeGroupEnd, nudgeGroupStart, selectedGroupId, startLoopGroup, stopPlayback])
 
   return (
     <main className="app-shell">
