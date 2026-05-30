@@ -108,6 +108,9 @@ function App() {
     setSelectedGroupId((current) => current && normalizedGroups.some((group) => group.id === current) ? current : normalizedGroups[0]?.id)
   }
 
+  const getTranscriptionSummary = (wordCount: number, groupCount: number) =>
+    `${wordCount} words, ${groupCount} groups`
+
   const loadCachedTranscription = (fingerprint: string, sourceFile?: File) => {
     const cachedTranscription = loadTranscriptionCache(fingerprint, language)
     if (!cachedTranscription) {
@@ -122,13 +125,23 @@ function App() {
           groups: savedProject.groups,
         })
       }
-      setStatus(`Loaded transcript from saved project for ${savedProject.fileName ?? 'this audio'}.`)
+      setStatus(
+        `Loaded transcript from saved project for ${savedProject.fileName ?? 'this audio'}: ${getTranscriptionSummary(
+          savedProject.words.length,
+          savedProject.groups.length,
+        )}.`,
+      )
       return true
     }
 
     setWords(cachedTranscription.result.words)
     setActiveGroups(cachedTranscription.result.groups)
-    setStatus(`Loaded cached transcription for ${cachedTranscription.fileName}. No API call needed.`)
+    setStatus(
+      `Loaded cached transcription for ${cachedTranscription.fileName}: ${getTranscriptionSummary(
+        cachedTranscription.result.words.length,
+        cachedTranscription.result.groups.length,
+      )}. No API call needed.`,
+    )
     return true
   }
 
@@ -173,15 +186,15 @@ function App() {
     setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
   }
 
-  const handleTranscribe = async () => {
+  const handleTranscribe = async (options?: { bypassCache?: boolean }) => {
     if (!file) return
     stopPlayback()
     setIsTranscribing(true)
-    setStatus('Checking local transcription cache...')
+    setStatus(options?.bypassCache ? 'Bypassing local cache and sending audio to the API...' : 'Checking local transcription cache...')
 
     try {
       const fingerprint = await ensureAudioFingerprint(file)
-      if (loadCachedTranscription(fingerprint, file)) return
+      if (!options?.bypassCache && loadCachedTranscription(fingerprint, file)) return
 
       setStatus('Sending audio to the local API...')
       const result = await transcribeFile(file, language)
@@ -190,8 +203,8 @@ function App() {
       setActiveGroups(result.groups)
       setStatus(
         didCache
-          ? `Transcribed ${result.words.length} words and cached this audio locally.`
-          : `Transcribed ${result.words.length} words. Local transcription cache failed.`,
+          ? `Transcribed ${getTranscriptionSummary(result.words.length, result.groups.length)} and cached this audio locally.`
+          : `Transcribed ${getTranscriptionSummary(result.words.length, result.groups.length)}. Local transcription cache failed.`,
       )
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Transcription failed.')

@@ -1,4 +1,4 @@
-import { FileUp, PlayCircle, WandSparkles } from 'lucide-react'
+import { FileUp, PlayCircle, RefreshCw, WandSparkles } from 'lucide-react'
 
 type ImportPanelProps = {
   fileName?: string
@@ -8,7 +8,7 @@ type ImportPanelProps = {
   onLanguageChange: (language: string) => void
   onFileChange: (file: File) => void
   onLoadSample: () => void
-  onTranscribe: () => void
+  onTranscribe: (options?: { bypassCache?: boolean }) => void
 }
 
 export function ImportPanel({
@@ -52,9 +52,18 @@ export function ImportPanel({
       </label>
 
       <div className="stack">
-        <button className="primary-button full" type="button" disabled={!fileName || isTranscribing} onClick={onTranscribe}>
+        <button className="primary-button full" type="button" disabled={!fileName || isTranscribing} onClick={() => onTranscribe()}>
           <WandSparkles size={17} />
           {isTranscribing ? 'Transcribing...' : 'Transcribe with word timing'}
+        </button>
+        <button
+          className="ghost-button full"
+          type="button"
+          disabled={!fileName || isTranscribing}
+          onClick={() => onTranscribe({ bypassCache: true })}
+        >
+          <RefreshCw size={17} />
+          Re-transcribe
         </button>
         <button className="ghost-button full" type="button" onClick={onLoadSample}>
           <PlayCircle size={17} />
