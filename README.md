@@ -11,9 +11,10 @@ CapCut Caption is a local caption-editing tool for short-form videos. It keeps w
 
 1. Upload audio or video in the web app.
 2. Transcribe with OpenAI `whisper-1` word timestamps.
-3. Regroup words locally with deterministic caption rules.
-4. Edit split/merge/text in the UI.
-5. Export `.srt`.
+3. Filter silent-zone timestamp hallucinations with local `ffmpeg` audio activity detection.
+4. Regroup words locally with deterministic caption rules.
+5. Edit split/merge/text in the UI.
+6. Export `.srt`.
 
 Manual text and timing edits are autosaved in the browser and are included in the SRT export. Caption groups are normalized so each non-final group is trimmed to the next group start, preventing overlapping subtitle blocks without moving the next group's start. Timeline detail is based on real time units and 30 fps frame steps, so manual nudges move caption starts by one video frame. Audio files are fingerprinted locally, so repeated uploads of the same file and language reuse the cached transcription instead of calling the API again. `Regroup` rebuilds blocks from the original word timestamps, so use it before text polishing or manual timing nudges.
 
@@ -34,3 +35,5 @@ source .venv/bin/activate
 pip install -r requirements.txt
 OPENAI_API_KEY=... uvicorn app.main:app --reload --port 8787
 ```
+
+The API expects `ffmpeg` and `ffprobe` to be available on `PATH`; they are used to drop word timestamps that land inside detected silence.
