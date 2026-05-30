@@ -26,6 +26,8 @@
 .row-actions,
 .metrics-row,
 .timeline-scale,
+.playback-panel,
+.zoom-control,
 .caption-row-time,
 .word-strip,
 .stack {
@@ -131,10 +133,8 @@ button:disabled {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(230px, 280px) minmax(560px, 1fr) minmax(230px, 280px);
+  grid-template-columns: minmax(0, 1fr) 280px;
   gap: 16px;
-  max-width: 1480px;
-  margin: 0 auto;
   padding: 18px;
 }
 
@@ -172,7 +172,6 @@ h2 {
   color: var(--heading);
 }
 
-.import-panel,
 .right-rail {
   align-self: start;
   position: sticky;
@@ -186,7 +185,7 @@ h2 {
 
 .dropzone {
   display: grid;
-  min-height: 124px;
+  min-height: 98px;
   place-items: center;
   gap: 10px;
   padding: 18px;
@@ -232,6 +231,29 @@ h2 {
   margin-top: 16px;
 }
 
+.import-panel {
+  display: grid;
+  grid-template-columns: 220px minmax(260px, 1fr) 160px 230px minmax(180px, 0.7fr);
+  gap: 14px;
+  align-items: end;
+}
+
+.import-panel .panel-heading,
+.import-panel .field,
+.import-panel .stack,
+.import-panel .status-line {
+  margin: 0;
+}
+
+.import-panel .stack {
+  align-self: stretch;
+  justify-content: end;
+}
+
+.import-panel .status-line {
+  align-self: center;
+}
+
 .status-line,
 .empty-copy {
   margin: 14px 0 0;
@@ -273,11 +295,53 @@ h2 {
   color: var(--muted);
 }
 
+.playback-panel {
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.playback-panel audio {
+  display: none;
+}
+
+.zoom-control {
+  flex: 1;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 260px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.zoom-control input {
+  width: min(320px, 32vw);
+  accent-color: #14927f;
+}
+
+.zoom-control strong {
+  min-width: 42px;
+  color: var(--heading);
+  text-align: right;
+}
+
 .waveform {
   min-height: 112px;
+  min-width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: linear-gradient(180deg, #ffffff, #f7faf8);
+}
+
+.waveform-scroll,
+.caption-track-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
 }
 
 .waveform-placeholder {
@@ -296,6 +360,7 @@ h2 {
 
 .timeline-panel {
   padding: 12px;
+  min-width: 0;
 }
 
 .timeline-scale {
@@ -307,6 +372,7 @@ h2 {
 
 .caption-track {
   position: relative;
+  min-width: 100%;
   height: 74px;
   overflow: hidden;
   border-radius: 8px;
@@ -364,7 +430,7 @@ h2 {
 
 .caption-row {
   display: grid;
-  grid-template-columns: 138px minmax(160px, 1fr) minmax(140px, 0.6fr) 76px;
+  grid-template-columns: 138px minmax(180px, 1fr) minmax(180px, 0.7fr) 112px;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -441,42 +507,21 @@ h2 {
   line-height: 1.45;
 }
 
-.selected-details {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-}
-
-.selected-details div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.selected-details dt {
-  color: var(--muted);
-}
-
-.selected-details dd {
-  margin: 0;
-  color: var(--heading);
-  font-weight: 800;
-}
-
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 1fr;
   }
 
-  .import-panel,
   .right-rail {
     position: static;
   }
 
   .right-rail {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+  }
+
+  .import-panel {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

@@ -1,4 +1,4 @@
-import { Combine, Scissors, StepForward } from 'lucide-react'
+import { Combine, Play, Scissors, StepForward } from 'lucide-react'
 
 import type { CaptionGroup, CaptionWord } from '../types'
 import { formatSeconds } from '../lib/captioning'
@@ -9,6 +9,7 @@ type CaptionEditorProps = {
   selectedGroupId?: string
   onSelect: (groupId: string) => void
   onTextChange: (groupId: string, text: string) => void
+  onPlayGroup: (groupId: string) => void
   onSplit: (groupId: string) => void
   onMergeNext: (groupId: string) => void
 }
@@ -19,6 +20,7 @@ export function CaptionEditor({
   selectedGroupId,
   onSelect,
   onTextChange,
+  onPlayGroup,
   onSplit,
   onMergeNext,
 }: CaptionEditorProps) {
@@ -66,6 +68,9 @@ export function CaptionEditor({
               </div>
 
               <div className="row-actions">
+                <button type="button" title="Play this group" onClick={() => onPlayGroup(group.id)}>
+                  <Play size={15} />
+                </button>
                 <button type="button" title="Split this group" onClick={() => onSplit(group.id)}>
                   <Scissors size={15} />
                 </button>
@@ -80,4 +85,3 @@ export function CaptionEditor({
     </section>
   )
 }
-

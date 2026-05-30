@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Pause, Play, Search } from 'lucide-react'
 
 import { transcribeFile } from './api'
 import './App.css'
@@ -28,14 +29,19 @@ function App() {
   const [language, setLanguage] = useState('uk')
   const [status, setStatus] = useState('Sample words loaded. Upload audio when ready.')
   const [isTranscribing, setIsTranscribing] = useState(false)
-
-  const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId),
-    [groups, selectedGroupId],
-  )
+  const [timelineZoom, setTimelineZoom] = useState(2)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const activeSegmentRef = useRef<{ groupId: string; end: number } | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl)
+    }
+  }, [audioUrl])
 
   const setActiveGroups = (nextGroups: CaptionGroup[]) => {
     setGroups(nextGroups)
@@ -143,6 +149,56 @@ function App() {
     setStatus('SRT exported. Import it into CapCut captions.')
   }
 
+  const playFrom = async (start: number, end?: number, groupId?: string) => {
+    const audio = audioRef.current
+    if (!audioUrl || !audio) {
+      setStatus('Upload audio or video to audition timing.')
+      return
+    }
+
+    activeSegmentRef.current = end && groupId ? { groupId, end } : null
+    audio.currentTime = start
+    await audio.play()
+    setIsPlaying(true)
+  }
+
+  const togglePlayback = async () => {
+    const audio = audioRef.current
+    if (!audioUrl || !audio) {
+      setStatus('Upload audio or video to play the timeline.')
+      return
+    }
+
+    if (isPlaying) {
+      audio.pause()
+      setIsPlaying(false)
+      return
+    }
+
+    activeSegmentRef.current = null
+    await audio.play()
+    setIsPlaying(true)
+  }
+
+  const playGroup = (groupId: string) => {
+    const group = groups.find((item) => item.id === groupId)
+    if (!group) return
+    setSelectedGroupId(groupId)
+    void playFrom(group.start, group.end, group.id)
+  }
+
+  const handleAudioTimeUpdate = () => {
+    const audio = audioRef.current
+    const activeSegment = activeSegmentRef.current
+    if (!audio || !activeSegment) return
+
+    if (audio.currentTime >= activeSegment.end) {
+      audio.pause()
+      setIsPlaying(false)
+      activeSegmentRef.current = null
+    }
+  }
+
   return (
     <main className="app-shell">
       <TopBar
@@ -155,18 +211,18 @@ function App() {
       />
 
       <section className="workspace">
-        <ImportPanel
-          fileName={file?.name}
-          language={language}
-          status={status}
-          isTranscribing={isTranscribing}
-          onLanguageChange={setLanguage}
-          onFileChange={handleFileChange}
-          onLoadSample={handleLoadSample}
-          onTranscribe={handleTranscribe}
-        />
-
         <section className="main-stage">
+          <ImportPanel
+            fileName={file?.name}
+            language={language}
+            status={status}
+            isTranscribing={isTranscribing}
+            onLanguageChange={setLanguage}
+            onFileChange={handleFileChange}
+            onLoadSample={handleLoadSample}
+            onTranscribe={handleTranscribe}
+          />
+
           <div className="metrics-row">
             <div>
               <span>{words.length}</span>
@@ -186,9 +242,44 @@ function App() {
             </div>
           </div>
 
-          <AudioWaveform audioUrl={audioUrl} />
+          <section className="playback-panel">
+            <audio
+              ref={audioRef}
+              src={audioUrl}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
+              onTimeUpdate={handleAudioTimeUpdate}
+            />
 
-          <CaptionTimeline groups={groups} selectedGroupId={selectedGroupId} onSelect={setSelectedGroupId} />
+            <button className="primary-button" type="button" onClick={togglePlayback}>
+              {isPlaying ? <Pause size={17} /> : <Play size={17} />}
+              {isPlaying ? 'Pause' : 'Play timeline'}
+            </button>
+
+            <label className="zoom-control">
+              <Search size={16} />
+              <span>Zoom</span>
+              <input
+                type="range"
+                min={1}
+                max={8}
+                step={0.5}
+                value={timelineZoom}
+                onChange={(event) => setTimelineZoom(Number(event.target.value))}
+              />
+              <strong>{timelineZoom.toFixed(1)}x</strong>
+            </label>
+          </section>
+
+          <AudioWaveform audioUrl={audioUrl} zoom={timelineZoom} />
+
+          <CaptionTimeline
+            groups={groups}
+            zoom={timelineZoom}
+            selectedGroupId={selectedGroupId}
+            onSelect={setSelectedGroupId}
+            onPlayGroup={playGroup}
+          />
 
           <CaptionEditor
             groups={groups}
@@ -196,6 +287,7 @@ function App() {
             selectedGroupId={selectedGroupId}
             onSelect={setSelectedGroupId}
             onTextChange={updateGroupText}
+            onPlayGroup={playGroup}
             onSplit={splitGroup}
             onMergeNext={mergeGroupWithNext}
           />
@@ -203,31 +295,6 @@ function App() {
 
         <div className="right-rail">
           <SettingsPanel settings={settings} onChange={setSettings} />
-
-          <aside className="panel selected-panel">
-            <div className="panel-heading">
-              <p className="panel-kicker">Selection</p>
-              <h2>{selectedGroup ? selectedGroup.textOverride || selectedGroup.text : 'No group'}</h2>
-            </div>
-            {selectedGroup ? (
-              <dl className="selected-details">
-                <div>
-                  <dt>Start</dt>
-                  <dd>{selectedGroup.start.toFixed(3)}s</dd>
-                </div>
-                <div>
-                  <dt>End</dt>
-                  <dd>{selectedGroup.end.toFixed(3)}s</dd>
-                </div>
-                <div>
-                  <dt>Words</dt>
-                  <dd>{selectedGroup.wordIds.length}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className="empty-copy">Select a caption block to inspect timing.</p>
-            )}
-          </aside>
         </div>
       </section>
     </main>
