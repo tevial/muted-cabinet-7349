@@ -69,12 +69,37 @@ export const saveProject = (project: SavedProject) => {
   }
 }
 
+export const getTranscriptionCacheMeta = (audioFingerprint: string, language: string) => {
+  const key = getTranscriptionCacheKey(audioFingerprint, language)
+
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return { key, exists: false, bytes: 0, words: 0, groups: 0 }
+
+    const cachedTranscription = JSON.parse(raw) as CachedTranscription
+    const counts = getStoredTranscriptCounts(cachedTranscription.result)
+    return {
+      key,
+      exists: true,
+      bytes: raw.length,
+      savedAt: cachedTranscription.savedAt,
+      fileName: cachedTranscription.fileName,
+      fileSize: cachedTranscription.fileSize,
+      words: counts.words,
+      groups: counts.groups,
+    }
+  } catch {
+    return { key, exists: false, bytes: 0, words: 0, groups: 0, unreadable: true }
+  }
+}
+
 export const saveTranscriptionCache = (
   audioFingerprint: string,
   file: File,
   language: string,
   result: TranscriptionResult,
 ) => {
+  const before = getTranscriptionCacheMeta(audioFingerprint, language)
   const cachedTranscription: CachedTranscription = {
     version: 1,
     savedAt: new Date().toISOString(),
@@ -86,10 +111,25 @@ export const saveTranscriptionCache = (
   }
 
   try {
-    localStorage.setItem(getTranscriptionCacheKey(audioFingerprint, language), JSON.stringify(cachedTranscription))
-    return true
+    const raw = JSON.stringify(cachedTranscription)
+    localStorage.setItem(getTranscriptionCacheKey(audioFingerprint, language), raw)
+    return {
+      ok: true,
+      key: before.key,
+      bytes: raw.length,
+      overwrote: before.exists,
+      previousWords: before.words,
+      previousGroups: before.groups,
+    }
   } catch {
-    return false
+    return {
+      ok: false,
+      key: before.key,
+      bytes: 0,
+      overwrote: before.exists,
+      previousWords: before.words,
+      previousGroups: before.groups,
+    }
   }
 }
 
@@ -131,34 +171,5 @@ export const loadProject = (): SavedProject | null => {
     }
   } catch {
     return null
-  }
-}
-
-export const getStorageDebugSnapshot = () => {
-  try {
-    return Object.keys(localStorage)
-      .filter((key) => key === projectStorageKey || key.startsWith(transcriptionCachePrefix))
-      .sort()
-      .map((key) => {
-        const raw = localStorage.getItem(key) ?? ''
-        const parsed = JSON.parse(raw) as Partial<SavedProject & CachedTranscription>
-        const result = 'result' in parsed ? parsed.result : undefined
-        const counts = getStoredTranscriptCounts(result ?? parsed)
-
-        return {
-          key,
-          bytes: raw.length,
-          version: parsed.version ?? null,
-          savedAt: parsed.savedAt ?? null,
-          audioFingerprint: parsed.audioFingerprint ?? null,
-          fileName: parsed.fileName ?? null,
-          fileSize: parsed.fileSize ?? null,
-          language: parsed.language ?? null,
-          words: counts.words,
-          groups: counts.groups,
-        }
-      })
-  } catch {
-    return []
   }
 }

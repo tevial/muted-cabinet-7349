@@ -25,10 +25,10 @@ import {
   timingNudgeStep,
 } from './lib/captioning'
 import { createAudioFingerprint } from './lib/audioFingerprint'
-import { buildTimestampDebugReport } from './lib/debugReport'
+import { flowLog, flowWarn, shortFingerprint, summarizeFile, summarizeTranscription } from './lib/flowLogger'
 import {
   createSavedProject,
-  getStorageDebugSnapshot,
+  getTranscriptionCacheMeta,
   loadProject,
   loadTranscriptionCache,
   saveProject,
@@ -87,6 +87,20 @@ function App() {
   const activeSegmentRef = useRef<{ groupId: string; start: number; end: number; loop: boolean } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const timelineScrollRef = useRef<HTMLDivElement | null>(null)
+  const autosaveLogKeyRef = useRef<string | undefined>(undefined)
+  const bootFlowLogRef = useRef({
+    restoredProject: Boolean(savedProject),
+    words: initialWords.length,
+    groups: initialGroups.length,
+    source: transcriptSource
+      ? {
+          fingerprint: shortFingerprint(transcriptSource.audioFingerprint),
+          fileName: transcriptSource.fileName ?? null,
+          fileSize: transcriptSource.fileSize ?? null,
+        }
+      : null,
+    language,
+  })
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const timelineDuration = Math.max(totalDuration, audioDuration, playheadTime, 1)
@@ -121,13 +135,29 @@ function App() {
   )
 
   useEffect(() => {
+    flowLog('boot', bootFlowLogRef.current)
+  }, [])
+
+  useEffect(() => {
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl)
     }
   }, [audioUrl])
 
   useEffect(() => {
-    saveProject(currentProject)
+    const didSave = saveProject(currentProject)
+    const logKey = `${currentProject.audioFingerprint ?? 'none'}:${currentProject.words.length}:${currentProject.groups.length}`
+
+    if (logKey !== autosaveLogKeyRef.current) {
+      autosaveLogKeyRef.current = logKey
+      flowLog('project autosave', {
+        ok: didSave,
+        words: currentProject.words.length,
+        groups: currentProject.groups.length,
+        transcriptFingerprint: shortFingerprint(currentProject.audioFingerprint),
+        fileName: currentProject.fileName ?? null,
+      })
+    }
   }, [currentProject])
 
   const keepPlayheadInView = useCallback((time: number) => {
@@ -228,8 +258,20 @@ function App() {
   const hasCachedTranscript = Boolean(cachedTranscription)
 
   const loadCachedTranscription = (fingerprint: string, sourceFile?: File) => {
+    flowLog('cache load: start', {
+      fingerprint: shortFingerprint(fingerprint),
+      language,
+      file: summarizeFile(sourceFile),
+    })
+
     const cachedTranscription = getCachedTranscription(fingerprint)
-    if (!cachedTranscription) return false
+    if (!cachedTranscription) {
+      flowWarn('cache load: miss', {
+        fingerprint: shortFingerprint(fingerprint),
+        language,
+      })
+      return false
+    }
 
     setWords(cachedTranscription.result.words)
     setActiveGroups(cachedTranscription.result.groups)
@@ -239,8 +281,18 @@ function App() {
       fileSize: sourceFile?.size ?? cachedTranscription.fileSize,
     })
     if (sourceFile) {
-      saveTranscriptionCache(fingerprint, sourceFile, language, cachedTranscription.result)
+      const cacheWrite = saveTranscriptionCache(fingerprint, sourceFile, language, cachedTranscription.result)
+      flowLog('cache load: normalized source cache', {
+        ok: cacheWrite.ok,
+        overwrote: cacheWrite.overwrote,
+        key: cacheWrite.key,
+      })
     }
+    flowLog('cache load: applied', {
+      fingerprint: shortFingerprint(fingerprint),
+      fileName: cachedTranscription.fileName,
+      result: summarizeTranscription(cachedTranscription.result),
+    })
     setStatus(
       `Loaded cached transcription for ${cachedTranscription.fileName}: ${getTranscriptionSummary(
         cachedTranscription.result.words.length,
@@ -251,7 +303,10 @@ function App() {
   }
 
   const handleLoadCachedTranscript = () => {
-    if (!audioFingerprint) return
+    if (!audioFingerprint) {
+      flowWarn('cache load: blocked, no audio fingerprint')
+      return
+    }
 
     stopPlayback()
     if (!loadCachedTranscription(audioFingerprint, file)) {
@@ -271,6 +326,10 @@ function App() {
 
   const handleFileChange = async (nextFile: File) => {
     stopPlayback()
+    flowLog('upload: selected', {
+      file: summarizeFile(nextFile),
+      language,
+    })
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setFile(nextFile)
     setAudioFingerprint(undefined)
@@ -282,14 +341,35 @@ function App() {
     try {
       const fingerprint = await createAudioFingerprint(nextFile)
       setAudioFingerprint(fingerprint)
-      const hasCache = Boolean(getCachedTranscription(fingerprint))
+      const cacheMeta = getTranscriptionCacheMeta(fingerprint, language)
+      const savedProjectFallback = savedProject?.audioFingerprint === fingerprint && savedProject.language === language
+      const hasCache = cacheMeta.exists || savedProjectFallback
       const isSameTranscript = transcriptSource?.audioFingerprint === fingerprint
+
+      flowLog('upload: fingerprint + cache check', {
+        fingerprint: shortFingerprint(fingerprint),
+        cacheHit: hasCache,
+        cacheWords: cacheMeta.words,
+        cacheGroups: cacheMeta.groups,
+        savedProjectFallback,
+        sameTranscript: isSameTranscript,
+      })
 
       if (!isSameTranscript) {
         setWords([])
         setGroups([])
         setSelectedGroupId(undefined)
         setTranscriptSource(undefined)
+        flowLog('upload: cleared stale transcript', {
+          previousFingerprint: shortFingerprint(transcriptSource?.audioFingerprint),
+          nextFingerprint: shortFingerprint(fingerprint),
+        })
+      } else {
+        flowLog('upload: kept current transcript', {
+          fingerprint: shortFingerprint(fingerprint),
+          words: words.length,
+          groups: groups.length,
+        })
       }
 
       setStatus(
@@ -298,26 +378,60 @@ function App() {
           : 'File staged. No cached transcription found yet.',
       )
     } catch {
+      flowWarn('upload: fingerprint failed', {
+        file: summarizeFile(nextFile),
+      })
       setStatus('File staged. Could not create a local cache fingerprint.')
     }
   }
 
   const handleRegroup = () => {
     stopPlayback()
+    flowLog('regroup: local rebuild', {
+      words: words.length,
+      previousGroups: groups.length,
+      settings,
+    })
     setActiveGroups(groupWords(words, settings))
     setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
   }
 
   const handleTranscribe = async () => {
-    if (!file) return
+    if (!file) {
+      flowWarn('transcribe: blocked, no file')
+      return
+    }
     stopPlayback()
     setIsTranscribing(true)
     setStatus('Sending audio to the local API...')
 
     try {
       const fingerprint = await ensureAudioFingerprint(file)
+      const cacheBefore = getTranscriptionCacheMeta(fingerprint, language)
+      flowLog('transcribe: request', {
+        file: summarizeFile(file),
+        language,
+        fingerprint: shortFingerprint(fingerprint),
+        cacheBefore: {
+          exists: cacheBefore.exists,
+          words: cacheBefore.words,
+          groups: cacheBefore.groups,
+        },
+      })
       const result = await transcribeFile(file, language)
-      const didCache = saveTranscriptionCache(fingerprint, file, language, result)
+      flowLog('transcribe: response', {
+        fingerprint: shortFingerprint(fingerprint),
+        result: summarizeTranscription(result),
+      })
+      const cacheWrite = saveTranscriptionCache(fingerprint, file, language, result)
+      flowLog('cache write: transcription', {
+        ok: cacheWrite.ok,
+        overwrote: cacheWrite.overwrote,
+        previousWords: cacheWrite.previousWords,
+        previousGroups: cacheWrite.previousGroups,
+        bytes: cacheWrite.bytes,
+        key: cacheWrite.key,
+      })
       setWords(result.words)
       setActiveGroups(result.groups)
       setTranscriptSource({
@@ -325,12 +439,24 @@ function App() {
         fileName: file.name,
         fileSize: file.size,
       })
+      flowLog('transcribe: applied to editor', {
+        fingerprint: shortFingerprint(fingerprint),
+        words: result.words.length,
+        groups: result.groups.length,
+        autosaveSource: {
+          fileName: file.name,
+          fileSize: file.size,
+        },
+      })
       setStatus(
-        didCache
+        cacheWrite.ok
           ? `Transcribed ${getTranscriptionSummary(result.words.length, result.groups.length)} and cached this audio locally.`
           : `Transcribed ${getTranscriptionSummary(result.words.length, result.groups.length)}. Local transcription cache failed.`,
       )
     } catch (error) {
+      flowWarn('transcribe: failed', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+      })
       setStatus(error instanceof Error ? error.message : 'Transcription failed.')
     } finally {
       setIsTranscribing(false)
@@ -416,41 +542,25 @@ function App() {
 
   const handleExportSrt = () => {
     const didSave = saveProject(currentProject)
+    flowLog('export: SRT', {
+      projectSaved: didSave,
+      groups: groups.length,
+      transcriptFingerprint: shortFingerprint(transcriptSource?.audioFingerprint),
+    })
     downloadTextFile('capcut-caption-export.srt', exportSrt(groups))
     setStatus(didSave ? 'Project saved locally and SRT exported.' : 'SRT exported. Local project save failed.')
   }
 
   const handleSaveProject = () => {
     const didSave = saveProject(currentProject)
-    setStatus(didSave ? 'Project saved locally in this browser.' : 'Local project save failed.')
-  }
-
-  const handleCopyDebugReport = async () => {
-    const debugReport = buildTimestampDebugReport({
-      audioDuration,
-      audioFingerprint,
-      emptyZoneCuts,
-      fileName: file?.name,
-      groups,
-      language,
-      playheadTime,
-      selectedGroupId,
-      settings,
-      storageSnapshot: getStorageDebugSnapshot(),
-      timelineDuration,
-      transcriptSource,
-      words,
+    flowLog('project save: manual', {
+      ok: didSave,
+      words: words.length,
+      groups: groups.length,
+      transcriptFingerprint: shortFingerprint(transcriptSource?.audioFingerprint),
+      fileName: transcriptSource?.fileName ?? null,
     })
-
-    console.info('[CapCut Caption Debug Report]\n%s', debugReport)
-
-    try {
-      await navigator.clipboard.writeText(debugReport)
-      setStatus('Debug timestamp report copied to clipboard and logged to console.')
-    } catch {
-      downloadTextFile('capcut-caption-debug.json', debugReport)
-      setStatus('Clipboard was blocked. Debug timestamp report was downloaded as JSON.')
-    }
+    setStatus(didSave ? 'Project saved locally in this browser.' : 'Local project save failed.')
   }
 
   const playFrom = async (start: number, end?: number, groupId?: string) => {
@@ -659,7 +769,6 @@ function App() {
   return (
     <main className="app-shell">
       <TopBar
-        canDebug={words.length > 0 || groups.length > 0 || emptyZoneCuts.length > 0}
         canExport={groups.length > 0}
         canTranscribe={Boolean(file)}
         hasCachedTranscript={hasCachedTranscript}
@@ -670,7 +779,6 @@ function App() {
         onRegroup={handleRegroup}
         onSaveProject={handleSaveProject}
         onExportSrt={handleExportSrt}
-        onCopyDebugReport={handleCopyDebugReport}
       />
 
       <section className="workspace">
