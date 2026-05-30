@@ -1,11 +1,13 @@
 import type { GroupingSettings } from '../types'
 
 type SettingsPanelProps = {
+  language: string
   settings: GroupingSettings
+  onLanguageChange: (language: string) => void
   onChange: (settings: GroupingSettings) => void
 }
 
-export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
+export function SettingsPanel({ language, settings, onLanguageChange, onChange }: SettingsPanelProps) {
   const update = (key: keyof GroupingSettings, value: number) => {
     onChange({ ...settings, [key]: value })
   }
@@ -16,6 +18,15 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
         <p className="panel-kicker">Grouping</p>
         <h2>Caption rules</h2>
       </div>
+
+      <label className="field">
+        <span>Language hint</span>
+        <input
+          value={language}
+          placeholder="uk, ru, en..."
+          onChange={(event) => onLanguageChange(event.target.value)}
+        />
+      </label>
 
       <label className="field">
         <span>Max words</span>
@@ -66,4 +77,3 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
     </aside>
   )
 }
-

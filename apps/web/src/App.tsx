@@ -6,7 +6,6 @@ import './App.css'
 import { AudioWaveform } from './components/AudioWaveform'
 import { CaptionEditor } from './components/CaptionEditor'
 import { CaptionTimeline } from './components/CaptionTimeline'
-import { ImportPanel } from './components/ImportPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { TopBar } from './components/TopBar'
 import { sampleWords } from './data/sampleProject'
@@ -183,13 +182,6 @@ function App() {
     } catch {
       setStatus('File staged. Could not create a local cache fingerprint.')
     }
-  }
-
-  const handleLoadSample = () => {
-    stopPlayback()
-    setWords(sampleWords)
-    setActiveGroups(groupWords(sampleWords, settings))
-    setStatus('Sample words loaded for editing and SRT export.')
   }
 
   const handleRegroup = () => {
@@ -466,7 +458,10 @@ function App() {
       <TopBar
         canExport={groups.length > 0}
         canTranscribe={Boolean(file)}
+        hasCachedTranscript={hasCachedTranscript}
         isTranscribing={isTranscribing}
+        onFileChange={handleFileChange}
+        onLoadCachedTranscript={handleLoadCachedTranscript}
         onTranscribe={handleTranscribe}
         onRegroup={handleRegroup}
         onSaveProject={handleSaveProject}
@@ -475,18 +470,10 @@ function App() {
 
       <section className="workspace">
         <section className="main-stage">
-          <ImportPanel
-            fileName={file?.name}
-            language={language}
-            status={status}
-            hasCachedTranscript={hasCachedTranscript}
-            isTranscribing={isTranscribing}
-            onLanguageChange={setLanguage}
-            onFileChange={handleFileChange}
-            onLoadSample={handleLoadSample}
-            onLoadCachedTranscript={handleLoadCachedTranscript}
-            onTranscribe={handleTranscribe}
-          />
+          <div className="status-strip">
+            <strong>{file?.name ?? 'No source file selected'}</strong>
+            <span>{status}</span>
+          </div>
 
           <div className="metrics-row">
             <div>
@@ -569,7 +556,12 @@ function App() {
         </section>
 
         <div className="right-rail">
-          <SettingsPanel settings={settings} onChange={setSettings} />
+          <SettingsPanel
+            language={language}
+            settings={settings}
+            onLanguageChange={setLanguage}
+            onChange={setSettings}
+          />
         </div>
       </section>
     </main>
