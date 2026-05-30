@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from io import BytesIO
-import logging
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -11,11 +10,9 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .audio_activity import TimeWindow, detect_speech_windows, time_is_in_windows
 from .captioning import CaptionGroup, GroupingSettings, Word, export_srt, group_words
 
 
-logger = logging.getLogger("capcut_caption.api")
 app = FastAPI(title="CapCut Caption API", version="0.1.0")
 
 app.add_middleware(
@@ -115,24 +112,6 @@ def _to_group_payloads(groups: list[CaptionGroup]) -> list[GroupPayload]:
     ]
 
 
-def _word_midpoint(word: WordPayload) -> float:
-    return word.start + ((word.end - word.start) / 2)
-
-
-def _filter_words_by_speech_windows(
-    words: list[WordPayload],
-    speech_windows: list[TimeWindow],
-) -> list[WordPayload]:
-    if not speech_windows:
-        return words
-
-    return [
-        word
-        for word in words
-        if word.end > word.start and time_is_in_windows(_word_midpoint(word), speech_windows)
-    ]
-
-
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -174,9 +153,7 @@ async def transcribe(
         )
 
     client = OpenAI(api_key=settings.openai_api_key)
-    audio_bytes = await file.read()
-    speech_windows = detect_speech_windows(audio_bytes, file.filename)
-    audio = BytesIO(audio_bytes)
+    audio = BytesIO(await file.read())
     audio.name = file.filename
 
     try:
@@ -204,21 +181,11 @@ async def transcribe(
         if getattr(item, "word", "").strip()
     ]
 
-    filtered_words = _filter_words_by_speech_windows(words, speech_windows)
-    removed_words = len(words) - len(filtered_words)
-    if removed_words:
-        logger.info(
-            "Filtered %s likely silent/hallucinated words from %s words using %s speech windows.",
-            removed_words,
-            len(words),
-            len(speech_windows),
-        )
-
-    grouped = group_words(_to_words(filtered_words), GroupingSettings())
+    grouped = group_words(_to_words(words), GroupingSettings())
     return TranscribeResponse(
         language=getattr(transcript, "language", language),
         duration=getattr(transcript, "duration", None),
-        text=" ".join(word.text for word in filtered_words),
-        words=filtered_words,
+        text=getattr(transcript, "text", ""),
+        words=words,
         groups=_to_group_payloads(grouped),
     )
