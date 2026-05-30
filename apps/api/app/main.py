@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .captioning import CaptionGroup, GroupingSettings, Word, export_srt, group_words
 
@@ -21,6 +22,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class Settings(BaseSettings):
+    openai_api_key: str = ""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+
+settings = Settings()
 
 
 class WordPayload(BaseModel):
@@ -136,7 +146,13 @@ async def transcribe(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing upload filename.")
 
-    client = OpenAI()
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="OPENAI_API_KEY is missing. Add it to apps/api/.env and restart the API server.",
+        )
+
+    client = OpenAI(api_key=settings.openai_api_key)
     audio = BytesIO(await file.read())
     audio.name = file.filename
 
