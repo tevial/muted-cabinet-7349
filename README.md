@@ -15,6 +15,8 @@ CapCut Caption is a local caption-editing tool for short-form videos. It keeps w
 4. Edit split/merge/text in the UI.
 5. Export `.srt`.
 
+Manual edits are autosaved in the browser and are included in the SRT export. `Regroup` rebuilds blocks from the original word timestamps, so use it before text polishing or save/export after manual caption text edits.
+
 ## Local Setup
 
 ```bash
@@ -30,4 +32,3 @@ source .venv/bin/activate
 pip install -r requirements.txt
 OPENAI_API_KEY=... uvicorn app.main:app --reload --port 8787
 ```
-

@@ -17,17 +17,23 @@ import {
   groupWords,
   rebuildGroupTiming,
 } from './lib/captioning'
+import { createSavedProject, loadProject, saveProject } from './lib/projectStorage'
 import type { CaptionGroup, CaptionWord, GroupingSettings } from './types'
 
 function App() {
-  const [words, setWords] = useState<CaptionWord[]>(sampleWords)
-  const [groups, setGroups] = useState<CaptionGroup[]>(() => groupWords(sampleWords))
-  const [settings, setSettings] = useState<GroupingSettings>(defaultGroupingSettings)
-  const [selectedGroupId, setSelectedGroupId] = useState<string>(groups[0]?.id)
+  const [savedProject] = useState(() => loadProject())
+  const initialWords = savedProject?.words ?? sampleWords
+  const initialGroups = savedProject?.groups ?? groupWords(initialWords)
+  const [words, setWords] = useState<CaptionWord[]>(initialWords)
+  const [groups, setGroups] = useState<CaptionGroup[]>(initialGroups)
+  const [settings, setSettings] = useState<GroupingSettings>(savedProject?.settings ?? defaultGroupingSettings)
+  const [selectedGroupId, setSelectedGroupId] = useState<string>(initialGroups[0]?.id)
   const [file, setFile] = useState<File | undefined>()
   const [audioUrl, setAudioUrl] = useState<string | undefined>()
-  const [language, setLanguage] = useState('uk')
-  const [status, setStatus] = useState('Sample words loaded. Upload audio when ready.')
+  const [language, setLanguage] = useState(savedProject?.language ?? 'uk')
+  const [status, setStatus] = useState(
+    savedProject ? 'Saved project restored. Manual edits are preserved.' : 'Sample words loaded. Upload audio when ready.',
+  )
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [timelineZoom, setTimelineZoom] = useState(2)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -36,12 +42,20 @@ function App() {
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
+  const currentProject = useMemo(
+    () => createSavedProject(language, words, groups, settings),
+    [groups, language, settings, words],
+  )
 
   useEffect(() => {
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl)
     }
   }, [audioUrl])
+
+  useEffect(() => {
+    saveProject(currentProject)
+  }, [currentProject])
 
   const setActiveGroups = (nextGroups: CaptionGroup[]) => {
     setGroups(nextGroups)
@@ -63,7 +77,7 @@ function App() {
 
   const handleRegroup = () => {
     setActiveGroups(groupWords(words, settings))
-    setStatus('Groups rebuilt from original word timestamps.')
+    setStatus('Groups rebuilt from original word timestamps. Manual text edits in groups were reset.')
   }
 
   const handleTranscribe = async () => {
@@ -145,8 +159,14 @@ function App() {
   }
 
   const handleExportSrt = () => {
+    const didSave = saveProject(currentProject)
     downloadTextFile('capcut-caption-export.srt', exportSrt(groups))
-    setStatus('SRT exported. Import it into CapCut captions.')
+    setStatus(didSave ? 'Project saved locally and SRT exported.' : 'SRT exported. Local project save failed.')
+  }
+
+  const handleSaveProject = () => {
+    const didSave = saveProject(currentProject)
+    setStatus(didSave ? 'Project saved locally in this browser.' : 'Local project save failed.')
   }
 
   const playFrom = async (start: number, end?: number, groupId?: string) => {
@@ -207,6 +227,7 @@ function App() {
         isTranscribing={isTranscribing}
         onTranscribe={handleTranscribe}
         onRegroup={handleRegroup}
+        onSaveProject={handleSaveProject}
         onExportSrt={handleExportSrt}
       />
 
