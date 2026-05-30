@@ -50,6 +50,9 @@ export const snapSecondsToFrame = (seconds: number) => roundTime(Math.round(seco
 const getSafeTime = (seconds: number, fallback: number) =>
   snapSecondsToFrame(Number.isFinite(seconds) ? seconds : fallback)
 
+const clampTime = (seconds: number, min: number, max: number) =>
+  Math.min(Math.max(seconds, min), max)
+
 export const normalizeGroupTimings = (groups: CaptionGroup[]): CaptionGroup[] => {
   const groupsWithSafeStarts = groups.map((group) => ({
     ...group,
@@ -79,13 +82,30 @@ export const setGroupBoundary = (
   if (groupIndex === -1) return groups
 
   const nextGroups = groups.map((group) => ({ ...group }))
-  nextGroups[groupIndex].start = getSafeTime(start, nextGroups[groupIndex].start)
-  nextGroups[groupIndex].end = getSafeTime(end, nextGroups[groupIndex].end)
+  const previous = nextGroups[groupIndex - 1]
+  const next = nextGroups[groupIndex + 1]
+  const minStart = previous ? previous.start : 0
+  const maxStart = next ? next.start : getSafeTime(end, nextGroups[groupIndex].end)
+  const safeStart = getSafeTime(start, nextGroups[groupIndex].start)
+
+  nextGroups[groupIndex].start = clampTime(safeStart, minStart, maxStart)
+
+  if (next) {
+    const nextNext = nextGroups[groupIndex + 2]
+    const minEnd = nextGroups[groupIndex].start
+    const maxEnd = nextNext ? nextNext.start : getSafeTime(next.end, next.start)
+    const safeEnd = getSafeTime(end, next.start)
+
+    next.start = clampTime(safeEnd, minEnd, maxEnd)
+  } else {
+    const safeEnd = getSafeTime(end, nextGroups[groupIndex].end)
+    nextGroups[groupIndex].end = Math.max(nextGroups[groupIndex].start, safeEnd)
+  }
 
   return normalizeGroupTimings(nextGroups)
 }
 
-export const nudgeGroupBoundary = (
+export const nudgeGroupStartBoundary = (
   groups: CaptionGroup[],
   groupId: string,
   offset: number,
@@ -94,6 +114,17 @@ export const nudgeGroupBoundary = (
   if (!group) return groups
 
   return setGroupBoundary(groups, groupId, group.start + offset, group.end)
+}
+
+export const nudgeGroupEndBoundary = (
+  groups: CaptionGroup[],
+  groupId: string,
+  offset: number,
+): CaptionGroup[] => {
+  const group = groups.find((item) => item.id === groupId)
+  if (!group) return groups
+
+  return setGroupBoundary(groups, groupId, group.start, group.end + offset)
 }
 
 export const groupWords = (

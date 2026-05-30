@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Pause, Play, Search } from 'lucide-react'
 
 import { transcribeFile } from './api'
@@ -16,7 +16,8 @@ import {
   exportSrt,
   groupWords,
   normalizeGroupTimings,
-  nudgeGroupBoundary,
+  nudgeGroupEndBoundary,
+  nudgeGroupStartBoundary,
   rebuildGroupTiming,
   setGroupBoundary,
   timingNudgeStep,
@@ -37,6 +38,12 @@ import {
 } from './lib/timelineScale'
 import type { CaptionGroup, CaptionWord, GroupingSettings } from './types'
 
+const isEditableShortcutTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false
+
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
 function App() {
   const [savedProject] = useState(() => loadProject())
   const initialWords = savedProject?.words ?? sampleWords
@@ -55,7 +62,8 @@ function App() {
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [timelineScaleIndex, setTimelineScaleIndex] = useState(defaultTimelineScaleIndex)
   const [isPlaying, setIsPlaying] = useState(false)
-  const activeSegmentRef = useRef<{ groupId: string; end: number } | null>(null)
+  const [loopedGroupId, setLoopedGroupId] = useState<string | undefined>()
+  const activeSegmentRef = useRef<{ groupId: string; start: number; end: number; loop: boolean } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
@@ -191,11 +199,17 @@ function App() {
     setGroups((current) => setGroupBoundary(current, groupId, start, end))
   }
 
-  const nudgeGroupTiming = (groupId: string, offset: number) => {
-    setGroups((current) => nudgeGroupBoundary(current, groupId, offset))
+  const nudgeGroupStart = useCallback((groupId: string, offset: number) => {
+    setGroups((current) => nudgeGroupStartBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group start nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
-  }
+  }, [])
+
+  const nudgeGroupEnd = useCallback((groupId: string, offset: number) => {
+    setGroups((current) => nudgeGroupEndBoundary(current, groupId, offset))
+    setSelectedGroupId(groupId)
+    setStatus(`Group end nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
+  }, [])
 
   const splitGroup = (groupId: string) => {
     const groupIndex = groups.findIndex((group) => group.id === groupId)
@@ -270,11 +284,36 @@ function App() {
       return
     }
 
-    activeSegmentRef.current = end && groupId ? { groupId, end } : null
+    setLoopedGroupId(undefined)
+    activeSegmentRef.current = end && groupId ? { groupId, start, end, loop: false } : null
     audio.currentTime = start
     await audio.play()
     setIsPlaying(true)
   }
+
+  const startLoopGroup = useCallback(async (groupId: string) => {
+    const audio = audioRef.current
+    const group = groups.find((item) => item.id === groupId)
+    if (!audioUrl || !audio || !group) {
+      setStatus('Upload audio or video to loop the selected group.')
+      return
+    }
+
+    setSelectedGroupId(group.id)
+    setLoopedGroupId(group.id)
+    activeSegmentRef.current = { groupId: group.id, start: group.start, end: group.end, loop: true }
+    audio.currentTime = group.start
+    await audio.play()
+    setIsPlaying(true)
+    setStatus('Looping selected group. Space stops playback.')
+  }, [audioUrl, groups])
+
+  const stopLoopPlayback = useCallback(() => {
+    audioRef.current?.pause()
+    activeSegmentRef.current = null
+    setLoopedGroupId(undefined)
+    setIsPlaying(false)
+  }, [])
 
   const togglePlayback = async () => {
     const audio = audioRef.current
@@ -289,6 +328,7 @@ function App() {
       return
     }
 
+    setLoopedGroupId(undefined)
     activeSegmentRef.current = null
     await audio.play()
     setIsPlaying(true)
@@ -307,11 +347,93 @@ function App() {
     if (!audio || !activeSegment) return
 
     if (audio.currentTime >= activeSegment.end) {
+      if (activeSegment.loop) {
+        audio.currentTime = activeSegment.start
+        void audio.play()
+        return
+      }
+
       audio.pause()
       setIsPlaying(false)
       activeSegmentRef.current = null
     }
   }
+
+  useEffect(() => {
+    if (!loopedGroupId) return
+
+    const group = groups.find((item) => item.id === loopedGroupId)
+    const audio = audioRef.current
+    if (!group || !audio) {
+      activeSegmentRef.current = null
+      setLoopedGroupId(undefined)
+      return
+    }
+
+    activeSegmentRef.current = { groupId: group.id, start: group.start, end: group.end, loop: true }
+    audio.currentTime = group.start
+    void audio.play()
+    setIsPlaying(true)
+  }, [groups, loopedGroupId])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableShortcutTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return
+      if (!selectedGroupId || !groups.length) return
+
+      const key = event.key.toLowerCase()
+
+      if (event.code === 'Space') {
+        event.preventDefault()
+        if (loopedGroupId) {
+          stopLoopPlayback()
+          return
+        }
+
+        void startLoopGroup(selectedGroupId)
+        return
+      }
+
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        const selectedIndex = Math.max(groups.findIndex((group) => group.id === selectedGroupId), 0)
+        const offset = event.shiftKey ? -1 : 1
+        const nextGroup = groups[(selectedIndex + offset + groups.length) % groups.length]
+        setSelectedGroupId(nextGroup.id)
+
+        if (loopedGroupId) {
+          void startLoopGroup(nextGroup.id)
+        }
+        return
+      }
+
+      if (key === 'a') {
+        event.preventDefault()
+        nudgeGroupStart(selectedGroupId, -timingNudgeStep)
+        return
+      }
+
+      if (key === 'd') {
+        event.preventDefault()
+        nudgeGroupStart(selectedGroupId, timingNudgeStep)
+        return
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        nudgeGroupEnd(selectedGroupId, -timingNudgeStep)
+        return
+      }
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        nudgeGroupEnd(selectedGroupId, timingNudgeStep)
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [groups, loopedGroupId, nudgeGroupEnd, nudgeGroupStart, selectedGroupId, startLoopGroup, stopLoopPlayback])
 
   return (
     <main className="app-shell">
@@ -410,7 +532,7 @@ function App() {
             onSelect={setSelectedGroupId}
             onTextChange={updateGroupText}
             onTimingChange={updateGroupTiming}
-            onNudgeTiming={nudgeGroupTiming}
+            onNudgeTiming={nudgeGroupStart}
             onPlayGroup={playGroup}
             onSplit={splitGroup}
             onMergeNext={mergeGroupWithNext}
