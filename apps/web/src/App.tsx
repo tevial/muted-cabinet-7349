@@ -25,6 +25,7 @@ import {
   timingNudgeStep,
 } from './lib/captioning'
 import { createAudioFingerprint } from './lib/audioFingerprint'
+import { buildTimestampDebugReport } from './lib/debugReport'
 import {
   createSavedProject,
   loadProject,
@@ -388,6 +389,31 @@ function App() {
     setStatus(didSave ? 'Project saved locally in this browser.' : 'Local project save failed.')
   }
 
+  const handleCopyDebugReport = async () => {
+    const debugReport = buildTimestampDebugReport({
+      audioDuration,
+      emptyZoneCuts,
+      fileName: file?.name,
+      groups,
+      language,
+      playheadTime,
+      selectedGroupId,
+      settings,
+      timelineDuration,
+      words,
+    })
+
+    console.info('[CapCut Caption Debug Report]\n%s', debugReport)
+
+    try {
+      await navigator.clipboard.writeText(debugReport)
+      setStatus('Debug timestamp report copied to clipboard and logged to console.')
+    } catch {
+      downloadTextFile('capcut-caption-debug.json', debugReport)
+      setStatus('Clipboard was blocked. Debug timestamp report was downloaded as JSON.')
+    }
+  }
+
   const playFrom = async (start: number, end?: number, groupId?: string) => {
     const audio = audioRef.current
     if (!audioUrl || !audio) {
@@ -594,6 +620,7 @@ function App() {
   return (
     <main className="app-shell">
       <TopBar
+        canDebug={words.length > 0 || groups.length > 0 || emptyZoneCuts.length > 0}
         canExport={groups.length > 0}
         canTranscribe={Boolean(file)}
         hasCachedTranscript={hasCachedTranscript}
@@ -604,6 +631,7 @@ function App() {
         onRegroup={handleRegroup}
         onSaveProject={handleSaveProject}
         onExportSrt={handleExportSrt}
+        onCopyDebugReport={handleCopyDebugReport}
       />
 
       <section className="workspace">

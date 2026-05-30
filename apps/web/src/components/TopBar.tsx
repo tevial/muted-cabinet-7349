@@ -1,7 +1,8 @@
-import { Database, Download, FileAudio, RefreshCcw, Save, Scissors, WandSparkles } from 'lucide-react'
+import { Bug, Database, Download, FileAudio, RefreshCcw, Save, Scissors, WandSparkles } from 'lucide-react'
 
 type TopBarProps = {
   canExport: boolean
+  canDebug: boolean
   canTranscribe: boolean
   hasCachedTranscript: boolean
   isTranscribing: boolean
@@ -11,10 +12,12 @@ type TopBarProps = {
   onRegroup: () => void
   onSaveProject: () => void
   onExportSrt: () => void
+  onCopyDebugReport: () => void
 }
 
 export function TopBar({
   canExport,
+  canDebug,
   canTranscribe,
   hasCachedTranscript,
   isTranscribing,
@@ -24,6 +27,7 @@ export function TopBar({
   onRegroup,
   onSaveProject,
   onExportSrt,
+  onCopyDebugReport,
 }: TopBarProps) {
   return (
     <header className="topbar">
@@ -75,6 +79,10 @@ export function TopBar({
         <button className="ghost-button" type="button" onClick={onSaveProject}>
           <Save size={17} />
           Save Project
+        </button>
+        <button className="ghost-button" type="button" disabled={!canDebug} onClick={onCopyDebugReport}>
+          <Bug size={17} />
+          Copy Debug
         </button>
         <button className="primary-button" type="button" disabled={!canExport} onClick={onExportSrt}>
           <Download size={17} />
