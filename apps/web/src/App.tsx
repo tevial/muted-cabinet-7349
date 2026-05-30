@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Pause, Play, Search } from 'lucide-react'
 
 import { transcribeFile } from './api'
@@ -13,6 +13,7 @@ import {
   defaultGroupingSettings,
   downloadTextFile,
   exportSrt,
+  formatSeconds,
   groupWords,
   normalizeGroupTimings,
   nudgeGroupEndBoundary,
@@ -50,7 +51,7 @@ function App() {
   const [words, setWords] = useState<CaptionWord[]>(initialWords)
   const [groups, setGroups] = useState<CaptionGroup[]>(initialGroups)
   const [settings, setSettings] = useState<GroupingSettings>(savedProject?.settings ?? defaultGroupingSettings)
-  const [selectedGroupId, setSelectedGroupId] = useState<string>(initialGroups[0]?.id)
+  const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(initialGroups[0]?.id)
   const [file, setFile] = useState<File | undefined>()
   const [audioFingerprint, setAudioFingerprint] = useState<string | undefined>()
   const [audioUrl, setAudioUrl] = useState<string | undefined>()
@@ -62,17 +63,24 @@ function App() {
   const [timelineScaleIndex, setTimelineScaleIndex] = useState(defaultTimelineScaleIndex)
   const [isPlaying, setIsPlaying] = useState(false)
   const [loopedGroupId, setLoopedGroupId] = useState<string | undefined>()
+  const [audioDuration, setAudioDuration] = useState(0)
+  const [playheadTime, setPlayheadTime] = useState(0)
   const activeSegmentRef = useRef<{ groupId: string; start: number; end: number; loop: boolean } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null)
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
+  const timelineDuration = Math.max(totalDuration, audioDuration, playheadTime, 1)
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
   const timelineScale = getTimelineScalePreset(timelineScaleIndex)
-  const timelineWidth = getTimelineWidth(totalDuration, timelineScale.pixelsPerSecond)
+  const timelineWidth = getTimelineWidth(timelineDuration, timelineScale.pixelsPerSecond)
   const timelineContentStyle = {
     width: timelineWidth,
     '--minor-grid': `${Math.max(4, timelineScale.unitSeconds * timelineScale.pixelsPerSecond)}px`,
     '--major-grid': `${Math.max(24, timelineScale.majorTickSeconds * timelineScale.pixelsPerSecond)}px`,
+  } as CSSProperties
+  const playheadStyle = {
+    left: `${Math.min(Math.max(playheadTime / timelineDuration, 0), 1) * 100}%`,
   } as CSSProperties
   const currentProject = useMemo(
     () =>
@@ -94,12 +102,73 @@ function App() {
     saveProject(currentProject)
   }, [currentProject])
 
-  const stopPlayback = useCallback(() => {
-    audioRef.current?.pause()
+  const keepPlayheadInView = useCallback((time: number) => {
+    const scroller = timelineScrollRef.current
+    if (!scroller) return
+
+    const playheadX = (time / timelineDuration) * scroller.scrollWidth
+    const leftEdge = scroller.scrollLeft
+    const rightEdge = leftEdge + scroller.clientWidth
+    const margin = Math.min(160, scroller.clientWidth * 0.2)
+
+    if (playheadX < leftEdge + margin || playheadX > rightEdge - margin) {
+      scroller.scrollLeft = Math.max(0, playheadX - scroller.clientWidth * 0.35)
+    }
+  }, [timelineDuration])
+
+  useEffect(() => {
+    if (!isPlaying) return
+
+    let animationFrame = 0
+    let lastSync = 0
+    const syncPlayhead = (timestamp: number) => {
+      const audio = audioRef.current
+      if (audio && timestamp - lastSync > 33) {
+        setPlayheadTime(audio.currentTime)
+        keepPlayheadInView(audio.currentTime)
+        lastSync = timestamp
+      }
+      animationFrame = requestAnimationFrame(syncPlayhead)
+    }
+
+    animationFrame = requestAnimationFrame(syncPlayhead)
+    return () => cancelAnimationFrame(animationFrame)
+  }, [isPlaying, keepPlayheadInView])
+
+  const clearSegmentPlayback = useCallback(() => {
     activeSegmentRef.current = null
     setLoopedGroupId(undefined)
-    setIsPlaying(false)
   }, [])
+
+  const stopPlayback = useCallback(() => {
+    audioRef.current?.pause()
+    clearSegmentPlayback()
+    setIsPlaying(false)
+  }, [clearSegmentPlayback])
+
+  const syncAudioPosition = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio) return
+
+    if (Number.isFinite(audio.duration)) {
+      setAudioDuration(audio.duration)
+    }
+    setPlayheadTime(audio.currentTime)
+  }, [])
+
+  const seekTo = useCallback((time: number) => {
+    const audio = audioRef.current
+    const audioLimit = audio && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : undefined
+    const maxTime = audioLimit ?? timelineDuration
+    const nextTime = Math.min(Math.max(time, 0), Math.max(maxTime, 0))
+
+    if (audio && audioUrl) {
+      audio.currentTime = nextTime
+    }
+    setPlayheadTime(nextTime)
+    keepPlayheadInView(nextTime)
+    return nextTime
+  }, [audioUrl, keepPlayheadInView, timelineDuration])
 
   const setActiveGroups = (nextGroups: CaptionGroup[]) => {
     const normalizedGroups = normalizeGroupTimings(nextGroups)
@@ -172,6 +241,8 @@ function App() {
     setFile(nextFile)
     setAudioFingerprint(undefined)
     setAudioUrl(URL.createObjectURL(nextFile))
+    setAudioDuration(0)
+    setPlayheadTime(0)
     setStatus('Checking local transcription cache...')
 
     try {
@@ -311,7 +382,7 @@ function App() {
 
     setLoopedGroupId(undefined)
     activeSegmentRef.current = end && groupId ? { groupId, start, end, loop: false } : null
-    audio.currentTime = start
+    seekTo(start)
     await audio.play()
     setIsPlaying(true)
   }
@@ -327,13 +398,13 @@ function App() {
     setSelectedGroupId(group.id)
     setLoopedGroupId(group.id)
     activeSegmentRef.current = { groupId: group.id, start: group.start, end: group.end, loop: true }
-    audio.currentTime = group.start
+    seekTo(group.start)
     await audio.play()
     setIsPlaying(true)
     setStatus('Looping selected group. Space stops playback.')
-  }, [audioUrl, groups])
+  }, [audioUrl, groups, seekTo])
 
-  const togglePlayback = async () => {
+  const togglePlayback = useCallback(async () => {
     const audio = audioRef.current
     if (!audioUrl || !audio) {
       setStatus('Upload audio or video to play the timeline.')
@@ -346,11 +417,13 @@ function App() {
       return
     }
 
-    setLoopedGroupId(undefined)
-    activeSegmentRef.current = null
+    clearSegmentPlayback()
+    if (audio.ended || audio.currentTime >= audio.duration) {
+      seekTo(0)
+    }
     await audio.play()
     setIsPlaying(true)
-  }
+  }, [audioUrl, clearSegmentPlayback, isPlaying, seekTo])
 
   const playGroup = (groupId: string) => {
     const group = groups.find((item) => item.id === groupId)
@@ -359,20 +432,54 @@ function App() {
     void playFrom(group.start, group.end, group.id)
   }
 
+  const handleTimelineGroupSelect = (groupId: string) => {
+    if (selectedGroupId === groupId) {
+      setSelectedGroupId(undefined)
+      if (loopedGroupId === groupId || activeSegmentRef.current?.groupId === groupId) {
+        clearSegmentPlayback()
+      }
+      setStatus('Group deselected. Space plays the full timeline from the playhead.')
+      return
+    }
+
+    setSelectedGroupId(groupId)
+    if (loopedGroupId) {
+      void startLoopGroup(groupId)
+      return
+    }
+    activeSegmentRef.current = null
+    setStatus('Group selected. Space loops this group.')
+  }
+
+  const handleTimelineSeek = (event: MouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (!rect.width) return
+
+    const x = Math.min(Math.max(event.clientX - rect.left, 0), rect.width)
+    const nextTime = seekTo((x / rect.width) * timelineDuration)
+    clearSegmentPlayback()
+    setSelectedGroupId(undefined)
+    setStatus(`Playhead moved to ${formatSeconds(nextTime)}. Space plays the full timeline from here.`)
+  }
+
   const handleAudioTimeUpdate = () => {
     const audio = audioRef.current
+    if (audio) setPlayheadTime(audio.currentTime)
+
     const activeSegment = activeSegmentRef.current
     if (!audio || !activeSegment) return
 
     if (audio.currentTime >= activeSegment.end) {
       if (activeSegment.loop) {
         audio.currentTime = activeSegment.start
+        setPlayheadTime(activeSegment.start)
         void audio.play()
         return
       }
 
       audio.pause()
       setIsPlaying(false)
+      setPlayheadTime(activeSegment.end)
       activeSegmentRef.current = null
     }
   }
@@ -397,12 +504,16 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableShortcutTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return
-      if (!selectedGroupId || !groups.length) return
 
       const key = event.key.toLowerCase()
 
       if (event.code === 'Space') {
         event.preventDefault()
+        if (!selectedGroupId) {
+          void togglePlayback()
+          return
+        }
+
         if (loopedGroupId) {
           stopPlayback()
           return
@@ -413,10 +524,12 @@ function App() {
       }
 
       if (event.key === 'Tab') {
+        if (!groups.length) return
         event.preventDefault()
-        const selectedIndex = Math.max(groups.findIndex((group) => group.id === selectedGroupId), 0)
         const offset = event.shiftKey ? -1 : 1
-        const nextGroup = groups[(selectedIndex + offset + groups.length) % groups.length]
+        const nextGroup = selectedGroupId
+          ? groups[(Math.max(groups.findIndex((group) => group.id === selectedGroupId), 0) + offset + groups.length) % groups.length]
+          : groups[event.shiftKey ? groups.length - 1 : 0]
         setSelectedGroupId(nextGroup.id)
 
         if (loopedGroupId) {
@@ -424,6 +537,8 @@ function App() {
         }
         return
       }
+
+      if (!selectedGroupId) return
 
       if (key === 'a') {
         event.preventDefault()
@@ -451,7 +566,7 @@ function App() {
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [groups, loopedGroupId, nudgeGroupEnd, nudgeGroupStart, selectedGroupId, startLoopGroup, stopPlayback])
+  }, [groups, loopedGroupId, nudgeGroupEnd, nudgeGroupStart, selectedGroupId, startLoopGroup, stopPlayback, togglePlayback])
 
   return (
     <main className="app-shell">
@@ -498,8 +613,18 @@ function App() {
             <audio
               ref={audioRef}
               src={audioUrl}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
+              onLoadedMetadata={syncAudioPosition}
+              onDurationChange={syncAudioPosition}
+              onSeeked={syncAudioPosition}
+              onPause={() => {
+                setIsPlaying(false)
+                syncAudioPosition()
+              }}
+              onEnded={() => {
+                setIsPlaying(false)
+                clearSegmentPlayback()
+                syncAudioPosition()
+              }}
               onTimeUpdate={handleAudioTimeUpdate}
             />
 
@@ -525,15 +650,17 @@ function App() {
           </section>
 
           <section className="timeline-stack">
-            <div className="timeline-scroll">
-              <div className="timeline-content" style={timelineContentStyle}>
+            <div className="timeline-scroll" ref={timelineScrollRef}>
+              <div className="timeline-content" style={timelineContentStyle} onClick={handleTimelineSeek}>
+                <div className="timeline-playhead" style={playheadStyle} aria-hidden="true" />
                 <AudioWaveform audioUrl={audioUrl} pixelsPerSecond={timelineScale.pixelsPerSecond} />
 
                 <CaptionTimeline
                   groups={groups}
                   scale={timelineScale}
+                  duration={timelineDuration}
                   selectedGroupId={selectedGroupId}
-                  onSelect={setSelectedGroupId}
+                  onSelect={handleTimelineGroupSelect}
                   onPlayGroup={playGroup}
                 />
               </div>

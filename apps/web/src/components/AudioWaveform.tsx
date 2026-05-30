@@ -25,6 +25,8 @@ export function AudioWaveform({ audioUrl, pixelsPerSecond }: AudioWaveformProps)
       barWidth: 2,
       barGap: 2,
       url: audioUrl,
+      interact: false,
+      cursorWidth: 0,
       fillParent: true,
       hideScrollbar: true,
       minPxPerSec: pixelsPerSecondRef.current,

@@ -5,6 +5,7 @@ import { getTimelineTicks, type TimelineScalePreset } from '../lib/timelineScale
 type CaptionTimelineProps = {
   groups: CaptionGroup[]
   scale: TimelineScalePreset
+  duration: number
   selectedGroupId?: string
   onSelect: (groupId: string) => void
   onPlayGroup: (groupId: string) => void
@@ -13,34 +14,41 @@ type CaptionTimelineProps = {
 export function CaptionTimeline({
   groups,
   scale,
+  duration,
   selectedGroupId,
   onSelect,
   onPlayGroup,
 }: CaptionTimelineProps) {
-  const duration = Math.max(...groups.map((group) => group.end), 1)
-  const ticks = getTimelineTicks(duration, scale.majorTickSeconds)
+  const safeDuration = Math.max(duration, 1)
+  const ticks = getTimelineTicks(safeDuration, scale.majorTickSeconds)
 
   return (
     <section className="timeline-panel">
       <div className="timeline-scale">
         {ticks.map((tick) => (
-          <span key={tick} style={{ left: `${(tick / duration) * 100}%` }}>
+          <span key={tick} style={{ left: `${(tick / safeDuration) * 100}%` }}>
             {formatSeconds(tick)}
           </span>
         ))}
       </div>
       <div className="caption-track">
         {groups.map((group) => {
-          const left = `${(group.start / duration) * 100}%`
-          const width = `${((group.end - group.start) / duration) * 100}%`
+          const left = `${(group.start / safeDuration) * 100}%`
+          const width = `${((group.end - group.start) / safeDuration) * 100}%`
           return (
             <button
               key={group.id}
               type="button"
               className={`caption-chip ${selectedGroupId === group.id ? 'active' : ''}`}
               style={{ left, width }}
-              onClick={() => onSelect(group.id)}
-              onDoubleClick={() => onPlayGroup(group.id)}
+              onClick={(event) => {
+                event.stopPropagation()
+                onSelect(group.id)
+              }}
+              onDoubleClick={(event) => {
+                event.stopPropagation()
+                onPlayGroup(group.id)
+              }}
               title={`${formatSeconds(group.start)} - ${formatSeconds(group.end)}. Double click to play.`}
             >
               {group.textOverride || group.text}

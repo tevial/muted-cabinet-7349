@@ -330,9 +330,11 @@ h2 {
 }
 
 .timeline-content {
+  position: relative;
   display: grid;
   min-width: 100%;
   gap: 10px;
+  cursor: crosshair;
 }
 
 .waveform {
@@ -341,6 +343,32 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: linear-gradient(180deg, #ffffff, #f7faf8);
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 8;
+  width: 2px;
+  background: #102f2a;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.82), 0 0 0 4px rgba(20, 146, 127, 0.16);
+  pointer-events: none;
+  transform: translateX(-1px);
+}
+
+.timeline-playhead::before {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #14927f;
+  box-shadow: 0 1px 4px rgba(16, 47, 42, 0.26);
+  content: '';
+  transform: translateX(-50%);
 }
 
 .waveform-placeholder {
@@ -402,6 +430,7 @@ h2 {
   position: absolute;
   box-sizing: border-box;
   top: 16px;
+  z-index: 2;
   height: 42px;
   overflow: hidden;
   padding: 0 9px;
@@ -413,6 +442,7 @@ h2 {
   font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .caption-chip.active {
