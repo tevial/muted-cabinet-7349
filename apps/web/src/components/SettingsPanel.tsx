@@ -16,7 +16,7 @@ type SettingsPanelProps = {
 }
 
 export function SettingsPanel({ language, stats, settings, onLanguageChange, onChange }: SettingsPanelProps) {
-  const update = (key: keyof GroupingSettings, value: number) => {
+  const update = <K extends keyof GroupingSettings>(key: K, value: GroupingSettings[K]) => {
     onChange({ ...settings, [key]: value })
   }
 
@@ -67,7 +67,7 @@ export function SettingsPanel({ language, stats, settings, onLanguageChange, onC
         <span>Min duration</span>
         <input
           type="number"
-          min={0}
+          min={0.05}
           step={0.05}
           value={settings.minDuration}
           onChange={(event) => update('minDuration', Number(event.target.value))}
@@ -95,8 +95,29 @@ export function SettingsPanel({ language, stats, settings, onLanguageChange, onC
         />
       </label>
 
+      <label className="field checkbox-field">
+        <input
+          type="checkbox"
+          checked={settings.trimEmptyZones}
+          onChange={(event) => update('trimEmptyZones', event.target.checked)}
+        />
+        <span>Trim empty zones</span>
+      </label>
+
+      <label className="field">
+        <span>Empty if no words for</span>
+        <input
+          type="number"
+          min={0}
+          step={0.05}
+          disabled={!settings.trimEmptyZones}
+          value={settings.emptyZoneThreshold}
+          onChange={(event) => update('emptyZoneThreshold', Number(event.target.value))}
+        />
+      </label>
+
       <div className="callout">
-        Sync is only needed when words are rewritten. Split and merge keep original word timestamps.
+        Empty zones use word timestamps. They can become CapCut cuts once exported into a draft rewrite.
       </div>
     </aside>
   )

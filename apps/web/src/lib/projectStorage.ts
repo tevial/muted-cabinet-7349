@@ -1,4 +1,5 @@
 import type { CaptionGroup, CaptionWord, GroupingSettings, TranscriptionResult } from '../types'
+import { normalizeGroupingSettings } from './captioning'
 
 export const projectStorageKey = 'capcut-caption-project-v1'
 const transcriptionCachePrefix = 'capcut-caption-transcription-v1'
@@ -109,7 +110,10 @@ export const loadProject = (): SavedProject | null => {
     if (project.version !== 1 || !Array.isArray(project.words) || !Array.isArray(project.groups)) {
       return null
     }
-    return project
+    return {
+      ...project,
+      settings: normalizeGroupingSettings(project.settings),
+    }
   } catch {
     return null
   }

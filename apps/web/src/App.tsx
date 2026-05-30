@@ -6,6 +6,7 @@ import './App.css'
 import { AudioWaveform } from './components/AudioWaveform'
 import { CaptionEditor } from './components/CaptionEditor'
 import { CaptionTimeline } from './components/CaptionTimeline'
+import { EmptyZoneOverlay } from './components/EmptyZoneOverlay'
 import { SettingsPanel } from './components/SettingsPanel'
 import { TopBar } from './components/TopBar'
 import { sampleWords } from './data/sampleProject'
@@ -14,6 +15,7 @@ import {
   downloadTextFile,
   exportSrt,
   formatSeconds,
+  getEmptyZoneCuts,
   groupWords,
   normalizeGroupTimings,
   nudgeGroupEndBoundary,
@@ -72,6 +74,10 @@ function App() {
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const timelineDuration = Math.max(totalDuration, audioDuration, playheadTime, 1)
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
+  const emptyZoneCuts = useMemo(
+    () => getEmptyZoneCuts(words, timelineDuration, settings),
+    [settings, timelineDuration, words],
+  )
   const captionStats = useMemo(
     () => ({
       words: words.length,
@@ -476,7 +482,15 @@ function App() {
     if (audio) setPlayheadTime(audio.currentTime)
 
     const activeSegment = activeSegmentRef.current
-    if (!audio || !activeSegment) return
+    if (!audio) return
+
+    if (!activeSegment) {
+      const cut = emptyZoneCuts.find((item) => audio.currentTime >= item.start && audio.currentTime < item.end)
+      if (cut) {
+        seekTo(cut.end)
+      }
+      return
+    }
 
     if (audio.currentTime >= activeSegment.end) {
       if (activeSegment.loop) {
@@ -643,6 +657,7 @@ function App() {
             <div className="timeline-scroll" ref={timelineScrollRef}>
               <div className="timeline-content" style={timelineContentStyle} onClick={handleTimelineSeek}>
                 <div className="timeline-playhead" style={playheadStyle} aria-hidden="true" />
+                <EmptyZoneOverlay cuts={emptyZoneCuts} duration={timelineDuration} />
                 <AudioWaveform audioUrl={audioUrl} pixelsPerSecond={timelineScale.pixelsPerSecond} />
 
                 <CaptionTimeline

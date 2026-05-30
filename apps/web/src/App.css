@@ -345,6 +345,28 @@ h2 {
   transform: translateX(-50%);
 }
 
+.empty-zone-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.empty-zone-cut {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border-right: 1px solid rgba(177, 73, 48, 0.5);
+  border-left: 1px solid rgba(177, 73, 48, 0.5);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(177, 73, 48, 0.18) 0 6px,
+      rgba(177, 73, 48, 0.06) 6px 12px
+    );
+}
+
 .waveform-placeholder {
   display: flex;
   align-items: center;
@@ -540,6 +562,22 @@ h2 {
   width: 32px;
   min-height: 30px;
   padding: 0;
+}
+
+.checkbox-field {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 0 10px;
+  color: var(--heading);
+  font-weight: 750;
+}
+
+.checkbox-field input {
+  width: 16px;
+  height: 16px;
+  accent-color: #14927f;
 }
 
 .mini-stats {

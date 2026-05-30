@@ -5,6 +5,8 @@ export const defaultGroupingSettings: GroupingSettings = {
   minDuration: 0.26,
   maxChars: 26,
   pauseThreshold: 0.42,
+  trimEmptyZones: false,
+  emptyZoneThreshold: 0.8,
 }
 
 export const captionFrameRate = 30
@@ -52,6 +54,17 @@ const getSafeTime = (seconds: number, fallback: number) =>
 
 const clampTime = (seconds: number, min: number, max: number) =>
   Math.min(Math.max(seconds, min), max)
+
+export const normalizeGroupingSettings = (settings?: Partial<GroupingSettings>): GroupingSettings => ({
+  ...defaultGroupingSettings,
+  ...settings,
+  maxWords: Math.max(1, Math.round(settings?.maxWords ?? defaultGroupingSettings.maxWords)),
+  minDuration: Math.max(0, settings?.minDuration ?? defaultGroupingSettings.minDuration),
+  maxChars: Math.max(1, Math.round(settings?.maxChars ?? defaultGroupingSettings.maxChars)),
+  pauseThreshold: Math.max(0, settings?.pauseThreshold ?? defaultGroupingSettings.pauseThreshold),
+  trimEmptyZones: Boolean(settings?.trimEmptyZones ?? defaultGroupingSettings.trimEmptyZones),
+  emptyZoneThreshold: Math.max(0.05, settings?.emptyZoneThreshold ?? defaultGroupingSettings.emptyZoneThreshold),
+})
 
 export const normalizeGroupTimings = (groups: CaptionGroup[]): CaptionGroup[] => {
   const groupsWithSafeStarts = groups.map((group) => ({
@@ -131,6 +144,7 @@ export const groupWords = (
   words: CaptionWord[],
   settings: GroupingSettings = defaultGroupingSettings,
 ): CaptionGroup[] => {
+  const safeSettings = normalizeGroupingSettings(settings)
   const groups: CaptionGroup[] = []
   let current: CaptionWord[] = []
 
@@ -161,11 +175,11 @@ export const groupWords = (
     const duration = word.end - current[0].start
     const gap = word.start - previous.end
     const shouldJoin =
-      isConnectorWord(previous.text) || isConnectorWord(word.text) || duration < settings.minDuration
+      isConnectorWord(previous.text) || isConnectorWord(word.text) || duration < safeSettings.minDuration
     const exceedsLimits =
-      candidate.length > settings.maxWords ||
-      candidateText.length > settings.maxChars ||
-      gap > settings.pauseThreshold
+      candidate.length > safeSettings.maxWords ||
+      candidateText.length > safeSettings.maxChars ||
+      gap > safeSettings.pauseThreshold
 
     if (shouldJoin && !exceedsLimits) {
       current = candidate
@@ -183,6 +197,49 @@ export const groupWords = (
 
   commit()
   return normalizeGroupTimings(groups)
+}
+
+export type EmptyZoneCut = {
+  id: string
+  start: number
+  end: number
+  duration: number
+}
+
+export const getEmptyZoneCuts = (
+  words: CaptionWord[],
+  timelineDuration: number,
+  settings: GroupingSettings,
+): EmptyZoneCut[] => {
+  const safeSettings = normalizeGroupingSettings(settings)
+  if (!safeSettings.trimEmptyZones || !words.length) return []
+
+  const sortedWords = [...words].sort((left, right) => left.start - right.start)
+  const safeDuration = Math.max(0, timelineDuration)
+  const cuts: EmptyZoneCut[] = []
+
+  const addCut = (start: number, end: number) => {
+    const safeStart = roundTime(Math.max(0, start))
+    const safeEnd = roundTime(Math.min(Math.max(end, safeStart), safeDuration))
+    const duration = roundTime(safeEnd - safeStart)
+
+    if (duration < safeSettings.emptyZoneThreshold) return
+    cuts.push({
+      id: `cut_${String(cuts.length + 1).padStart(4, '0')}`,
+      start: safeStart,
+      end: safeEnd,
+      duration,
+    })
+  }
+
+  addCut(0, sortedWords[0].start)
+  sortedWords.forEach((word, index) => {
+    const nextWord = sortedWords[index + 1]
+    if (nextWord) addCut(word.end, nextWord.start)
+  })
+  addCut(sortedWords[sortedWords.length - 1].end, safeDuration)
+
+  return cuts
 }
 
 export const rebuildGroupTiming = (group: CaptionGroup, words: CaptionWord[]): CaptionGroup => {

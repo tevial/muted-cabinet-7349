@@ -20,6 +20,8 @@ export type GroupingSettings = {
   minDuration: number
   maxChars: number
   pauseThreshold: number
+  trimEmptyZones: boolean
+  emptyZoneThreshold: number
 }
 
 export type TranscriptionResult = {
@@ -29,4 +31,3 @@ export type TranscriptionResult = {
   words: CaptionWord[]
   groups: CaptionGroup[]
 }
-
