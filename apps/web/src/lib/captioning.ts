@@ -9,8 +9,6 @@ export const defaultGroupingSettings: GroupingSettings = {
 
 export const timingNudgeStep = 0.05
 
-const minGroupDuration = 0.04
-
 const connectorWords = new Set([
   'а',
   'але',
@@ -49,26 +47,19 @@ const getSafeTime = (seconds: number, fallback: number) =>
   roundTime(Number.isFinite(seconds) ? seconds : fallback)
 
 export const normalizeGroupTimings = (groups: CaptionGroup[]): CaptionGroup[] => {
-  const groupsWithSafeStarts = groups.reduce<CaptionGroup[]>((normalized, group) => {
-    const previous = normalized.at(-1)
-    const minStart = previous ? previous.start + minGroupDuration : 0
-    const start = Math.max(minStart, getSafeTime(group.start, minStart))
-
-    normalized.push({
-      ...group,
-      start,
-    })
-
-    return normalized
-  }, [])
+  const groupsWithSafeStarts = groups.map((group) => ({
+    ...group,
+    start: Math.max(0, getSafeTime(group.start, 0)),
+  }))
 
   return groupsWithSafeStarts.map((group, index) => {
     const next = groupsWithSafeStarts[index + 1]
-    const end = next ? next.start : Math.max(group.start + minGroupDuration, getSafeTime(group.end, group.start))
+    const requestedEnd = getSafeTime(group.end, group.start)
+    const end = next ? next.start : requestedEnd
 
     return {
       ...group,
-      start: roundTime(group.start),
+      start: roundTime(Math.min(group.start, end)),
       end: roundTime(end),
     }
   })
@@ -85,12 +76,7 @@ export const setGroupBoundary = (
 
   const nextGroups = groups.map((group) => ({ ...group }))
   nextGroups[groupIndex].start = getSafeTime(start, nextGroups[groupIndex].start)
-
-  if (groupIndex < nextGroups.length - 1) {
-    nextGroups[groupIndex + 1].start = getSafeTime(end, nextGroups[groupIndex + 1].start)
-  } else {
-    nextGroups[groupIndex].end = getSafeTime(end, nextGroups[groupIndex].end)
-  }
+  nextGroups[groupIndex].end = getSafeTime(end, nextGroups[groupIndex].end)
 
   return normalizeGroupTimings(nextGroups)
 }

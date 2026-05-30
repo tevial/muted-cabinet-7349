@@ -43,9 +43,10 @@ export function CaptionEditor({
       </div>
 
       <div className="group-list">
-        {groups.map((group) => {
+        {groups.map((group, index) => {
           const groupWords = group.wordIds.map((id) => wordMap.get(id)).filter(Boolean) as CaptionWord[]
           const isSelected = group.id === selectedGroupId
+          const isLastGroup = index === groups.length - 1
 
           return (
             <article
@@ -76,6 +77,8 @@ export function CaptionEditor({
                     value={group.end.toFixed(2)}
                     onChange={(event) => onTimingChange(group.id, group.start, Number(event.target.value))}
                     onClick={(event) => event.stopPropagation()}
+                    disabled={!isLastGroup}
+                    title={isLastGroup ? 'Edit final group end' : 'Derived from the next group start'}
                     aria-label={`End time ${group.id}`}
                   />
                 </label>

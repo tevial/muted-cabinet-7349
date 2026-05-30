@@ -490,6 +490,11 @@ h2 {
   font-size: 12px;
 }
 
+.caption-row-time input:disabled {
+  color: var(--muted);
+  background: transparent;
+}
+
 .caption-row input:focus {
   border-color: #a8c8c0;
   background: #ffffff;
