@@ -4,7 +4,7 @@ type TopBarProps = {
   canExport: boolean
   canTranscribe: boolean
   isTranscribing: boolean
-  onTranscribe: (options?: { bypassCache?: boolean }) => void
+  onTranscribe: () => void
   onRegroup: () => void
   onSaveProject: () => void
   onExportSrt: () => void
@@ -36,7 +36,7 @@ export function TopBar({
           <FileAudio size={17} />
           Upload
         </label>
-        <button className="ghost-button" type="button" disabled={!canTranscribe || isTranscribing} onClick={() => onTranscribe()}>
+        <button className="ghost-button" type="button" disabled={!canTranscribe || isTranscribing} onClick={onTranscribe}>
           <WandSparkles size={17} />
           {isTranscribing ? 'Transcribing' : 'Transcribe'}
         </button>

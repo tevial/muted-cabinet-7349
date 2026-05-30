@@ -1,24 +1,28 @@
-import { FileUp, PlayCircle, RefreshCw, WandSparkles } from 'lucide-react'
+import { Database, FileUp, PlayCircle, WandSparkles } from 'lucide-react'
 
 type ImportPanelProps = {
   fileName?: string
   language: string
   status: string
+  hasCachedTranscript: boolean
   isTranscribing: boolean
   onLanguageChange: (language: string) => void
   onFileChange: (file: File) => void
   onLoadSample: () => void
-  onTranscribe: (options?: { bypassCache?: boolean }) => void
+  onLoadCachedTranscript: () => void
+  onTranscribe: () => void
 }
 
 export function ImportPanel({
   fileName,
   language,
   status,
+  hasCachedTranscript,
   isTranscribing,
   onLanguageChange,
   onFileChange,
   onLoadSample,
+  onLoadCachedTranscript,
   onTranscribe,
 }: ImportPanelProps) {
   return (
@@ -52,19 +56,16 @@ export function ImportPanel({
       </label>
 
       <div className="stack">
-        <button className="primary-button full" type="button" disabled={!fileName || isTranscribing} onClick={() => onTranscribe()}>
+        <button className="primary-button full" type="button" disabled={!fileName || isTranscribing} onClick={onTranscribe}>
           <WandSparkles size={17} />
           {isTranscribing ? 'Transcribing...' : 'Transcribe with word timing'}
         </button>
-        <button
-          className="ghost-button full"
-          type="button"
-          disabled={!fileName || isTranscribing}
-          onClick={() => onTranscribe({ bypassCache: true })}
-        >
-          <RefreshCw size={17} />
-          Re-transcribe
-        </button>
+        {hasCachedTranscript ? (
+          <button className="ghost-button full" type="button" disabled={isTranscribing} onClick={onLoadCachedTranscript}>
+            <Database size={17} />
+            Load cached transcript
+          </button>
+        ) : null}
         <button className="ghost-button full" type="button" onClick={onLoadSample}>
           <PlayCircle size={17} />
           Load sample words

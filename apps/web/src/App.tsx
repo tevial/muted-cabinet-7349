@@ -111,31 +111,34 @@ function App() {
   const getTranscriptionSummary = (wordCount: number, groupCount: number) =>
     `${wordCount} words, ${groupCount} groups`
 
-  const loadCachedTranscription = (fingerprint: string, sourceFile?: File) => {
+  const getCachedTranscription = useCallback((fingerprint: string) => {
     const cachedTranscription = loadTranscriptionCache(fingerprint, language)
-    if (!cachedTranscription) {
-      if (savedProject?.audioFingerprint !== fingerprint || savedProject.language !== language) return false
+    if (cachedTranscription) return cachedTranscription
 
-      setWords(savedProject.words)
-      setActiveGroups(savedProject.groups)
-      if (sourceFile) {
-        saveTranscriptionCache(fingerprint, sourceFile, language, {
-          text: savedProject.words.map((word) => word.text).join(' '),
-          words: savedProject.words,
-          groups: savedProject.groups,
-        })
-      }
-      setStatus(
-        `Loaded transcript from saved project for ${savedProject.fileName ?? 'this audio'}: ${getTranscriptionSummary(
-          savedProject.words.length,
-          savedProject.groups.length,
-        )}.`,
-      )
-      return true
+    if (savedProject?.audioFingerprint !== fingerprint || savedProject.language !== language) return null
+
+    return {
+      fileName: savedProject.fileName ?? 'this audio',
+      result: {
+        text: savedProject.words.map((word) => word.text).join(' '),
+        words: savedProject.words,
+        groups: savedProject.groups,
+      },
     }
+  }, [language, savedProject])
+
+  const cachedTranscription = audioFingerprint ? getCachedTranscription(audioFingerprint) : null
+  const hasCachedTranscript = Boolean(cachedTranscription)
+
+  const loadCachedTranscription = (fingerprint: string, sourceFile?: File) => {
+    const cachedTranscription = getCachedTranscription(fingerprint)
+    if (!cachedTranscription) return false
 
     setWords(cachedTranscription.result.words)
     setActiveGroups(cachedTranscription.result.groups)
+    if (sourceFile) {
+      saveTranscriptionCache(fingerprint, sourceFile, language, cachedTranscription.result)
+    }
     setStatus(
       `Loaded cached transcription for ${cachedTranscription.fileName}: ${getTranscriptionSummary(
         cachedTranscription.result.words.length,
@@ -143,6 +146,17 @@ function App() {
       )}. No API call needed.`,
     )
     return true
+  }
+
+  const handleLoadCachedTranscript = () => {
+    if (!audioFingerprint) return
+
+    stopPlayback()
+    if (!loadCachedTranscription(audioFingerprint, file)) {
+      setStatus(
+        'No cached transcription is available for this file and language. Use Transcribe to generate one.',
+      )
+    }
   }
 
   const ensureAudioFingerprint = async (nextFile: File) => {
@@ -164,10 +178,8 @@ function App() {
     try {
       const fingerprint = await createAudioFingerprint(nextFile)
       setAudioFingerprint(fingerprint)
-
-      if (!loadCachedTranscription(fingerprint, nextFile)) {
-        setStatus('File staged. No cached transcription found yet.')
-      }
+      const hasCache = Boolean(getCachedTranscription(fingerprint))
+      setStatus(hasCache ? 'Cached transcription is available for this file.' : 'File staged. No cached transcription found yet.')
     } catch {
       setStatus('File staged. Could not create a local cache fingerprint.')
     }
@@ -186,17 +198,14 @@ function App() {
     setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
   }
 
-  const handleTranscribe = async (options?: { bypassCache?: boolean }) => {
+  const handleTranscribe = async () => {
     if (!file) return
     stopPlayback()
     setIsTranscribing(true)
-    setStatus(options?.bypassCache ? 'Bypassing local cache and sending audio to the API...' : 'Checking local transcription cache...')
+    setStatus('Sending audio to the local API...')
 
     try {
       const fingerprint = await ensureAudioFingerprint(file)
-      if (!options?.bypassCache && loadCachedTranscription(fingerprint, file)) return
-
-      setStatus('Sending audio to the local API...')
       const result = await transcribeFile(file, language)
       const didCache = saveTranscriptionCache(fingerprint, file, language, result)
       setWords(result.words)
@@ -470,10 +479,12 @@ function App() {
             fileName={file?.name}
             language={language}
             status={status}
+            hasCachedTranscript={hasCachedTranscript}
             isTranscribing={isTranscribing}
             onLanguageChange={setLanguage}
             onFileChange={handleFileChange}
             onLoadSample={handleLoadSample}
+            onLoadCachedTranscript={handleLoadCachedTranscript}
             onTranscribe={handleTranscribe}
           />
 
