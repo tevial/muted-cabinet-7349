@@ -41,3 +41,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 OPENAI_API_KEY=... uvicorn app.main:app --reload --port 8787
 ```
+
+## API Debugging
+
+To inspect the raw data returned by the transcription API without React,
+localStorage, cache, or ingest logic:
+
+```bash
+python3 tools/transcribe_api_debug.py /path/to/audio.mp3 --language uk
+```
+
+Use `--json` to print the full response payload and `--limit 20` to shorten
+the word/group tables.
