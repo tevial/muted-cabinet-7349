@@ -60,8 +60,8 @@ export function CaptionEditor({
                   <input
                     type="number"
                     min={0}
-                    step={0.01}
-                    value={group.start.toFixed(2)}
+                    step={timingNudgeStep}
+                    value={group.start.toFixed(3)}
                     onChange={(event) => onTimingChange(group.id, Number(event.target.value), group.end)}
                     onClick={(event) => event.stopPropagation()}
                     aria-label={`Start time ${group.id}`}
@@ -73,8 +73,8 @@ export function CaptionEditor({
                   <input
                     type="number"
                     min={0}
-                    step={0.01}
-                    value={group.end.toFixed(2)}
+                    step={timingNudgeStep}
+                    value={group.end.toFixed(3)}
                     onChange={(event) => onTimingChange(group.id, group.start, Number(event.target.value))}
                     onClick={(event) => event.stopPropagation()}
                     disabled={!isLastGroup}
@@ -104,14 +104,14 @@ export function CaptionEditor({
                 </button>
                 <button
                   type="button"
-                  title={`Move start ${timingNudgeStep.toFixed(2)}s earlier`}
+                  title={`Move start 1 frame earlier (${timingNudgeStep.toFixed(3)}s)`}
                   onClick={() => onNudgeTiming(group.id, -timingNudgeStep)}
                 >
                   <ChevronLeft size={15} />
                 </button>
                 <button
                   type="button"
-                  title={`Move start ${timingNudgeStep.toFixed(2)}s later`}
+                  title={`Move start 1 frame later (${timingNudgeStep.toFixed(3)}s)`}
                   onClick={() => onNudgeTiming(group.id, timingNudgeStep)}
                 >
                   <ChevronRight size={15} />

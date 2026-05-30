@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Pause, Play, Search } from 'lucide-react'
 
 import { transcribeFile } from './api'
@@ -29,6 +29,12 @@ import {
   saveProject,
   saveTranscriptionCache,
 } from './lib/projectStorage'
+import {
+  defaultTimelineScaleIndex,
+  getTimelineScalePreset,
+  getTimelineWidth,
+  timelineScalePresets,
+} from './lib/timelineScale'
 import type { CaptionGroup, CaptionWord, GroupingSettings } from './types'
 
 function App() {
@@ -47,14 +53,20 @@ function App() {
     savedProject ? 'Saved project restored. Manual edits are preserved.' : 'Sample words loaded. Upload audio when ready.',
   )
   const [isTranscribing, setIsTranscribing] = useState(false)
-  const [timelineZoom, setTimelineZoom] = useState(2)
+  const [timelineScaleIndex, setTimelineScaleIndex] = useState(defaultTimelineScaleIndex)
   const [isPlaying, setIsPlaying] = useState(false)
   const activeSegmentRef = useRef<{ groupId: string; end: number } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
-  const timelineWidth = `${Math.max(100, timelineZoom * 100)}%`
+  const timelineScale = getTimelineScalePreset(timelineScaleIndex)
+  const timelineWidth = getTimelineWidth(totalDuration, timelineScale.pixelsPerSecond)
+  const timelineContentStyle = {
+    width: timelineWidth,
+    '--minor-grid': `${Math.max(4, timelineScale.unitSeconds * timelineScale.pixelsPerSecond)}px`,
+    '--major-grid': `${Math.max(24, timelineScale.majorTickSeconds * timelineScale.pixelsPerSecond)}px`,
+  } as CSSProperties
   const currentProject = useMemo(
     () =>
       createSavedProject(language, words, groups, settings, {
@@ -182,7 +194,7 @@ function App() {
   const nudgeGroupTiming = (groupId: string, offset: number) => {
     setGroups((current) => nudgeGroupBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
-    setStatus(`Group start nudged ${Math.abs(offset).toFixed(2)}s ${offset < 0 ? 'earlier' : 'later'}.`)
+    setStatus(`Group start nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
   }
 
   const splitGroup = (groupId: string) => {
@@ -361,26 +373,28 @@ function App() {
 
             <label className="zoom-control">
               <Search size={16} />
-              <span>Zoom</span>
+              <span>Time detail</span>
               <input
                 type="range"
-                min={1}
-                max={32}
-                step={0.5}
-                value={timelineZoom}
-                onChange={(event) => setTimelineZoom(Number(event.target.value))}
+                min={0}
+                max={timelineScalePresets.length - 1}
+                step={1}
+                value={timelineScaleIndex}
+                onChange={(event) => setTimelineScaleIndex(Number(event.target.value))}
               />
-              <strong>{timelineZoom.toFixed(1)}x</strong>
+              <strong>{timelineScale.label}</strong>
+              <em>{timelineScale.detail}</em>
             </label>
           </section>
 
           <section className="timeline-stack">
             <div className="timeline-scroll">
-              <div className="timeline-content" style={{ width: timelineWidth }}>
-                <AudioWaveform audioUrl={audioUrl} zoom={timelineZoom} />
+              <div className="timeline-content" style={timelineContentStyle}>
+                <AudioWaveform audioUrl={audioUrl} pixelsPerSecond={timelineScale.pixelsPerSecond} />
 
                 <CaptionTimeline
                   groups={groups}
+                  scale={timelineScale}
                   selectedGroupId={selectedGroupId}
                   onSelect={setSelectedGroupId}
                   onPlayGroup={playGroup}

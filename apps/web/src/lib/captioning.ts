@@ -7,7 +7,9 @@ export const defaultGroupingSettings: GroupingSettings = {
   pauseThreshold: 0.42,
 }
 
-export const timingNudgeStep = 0.05
+export const captionFrameRate = 30
+const frameDuration = 1 / captionFrameRate
+export const timingNudgeStep = frameDuration
 
 const connectorWords = new Set([
   'а',
@@ -43,8 +45,10 @@ const getGroupText = (words: CaptionWord[]) => words.map((word) => word.text).jo
 
 const roundTime = (seconds: number) => Math.round(seconds * 1000) / 1000
 
+export const snapSecondsToFrame = (seconds: number) => roundTime(Math.round(seconds / frameDuration) * frameDuration)
+
 const getSafeTime = (seconds: number, fallback: number) =>
-  roundTime(Number.isFinite(seconds) ? seconds : fallback)
+  snapSecondsToFrame(Number.isFinite(seconds) ? seconds : fallback)
 
 export const normalizeGroupTimings = (groups: CaptionGroup[]): CaptionGroup[] => {
   const groupsWithSafeStarts = groups.map((group) => ({

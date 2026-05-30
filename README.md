@@ -15,7 +15,7 @@ CapCut Caption is a local caption-editing tool for short-form videos. It keeps w
 4. Edit split/merge/text in the UI.
 5. Export `.srt`.
 
-Manual text and timing edits are autosaved in the browser and are included in the SRT export. Caption groups are normalized so each non-final group is trimmed to the next group start, preventing overlapping subtitle blocks without moving the next group's start. Audio files are fingerprinted locally, so repeated uploads of the same file and language reuse the cached transcription instead of calling the API again. `Regroup` rebuilds blocks from the original word timestamps, so use it before text polishing or manual timing nudges.
+Manual text and timing edits are autosaved in the browser and are included in the SRT export. Caption groups are normalized so each non-final group is trimmed to the next group start, preventing overlapping subtitle blocks without moving the next group's start. Timeline detail is based on real time units and 30 fps frame steps, so manual nudges move caption starts by one video frame. Audio files are fingerprinted locally, so repeated uploads of the same file and language reuse the cached transcription instead of calling the API again. `Regroup` rebuilds blocks from the original word timestamps, so use it before text polishing or manual timing nudges.
 
 ## Local Setup
 

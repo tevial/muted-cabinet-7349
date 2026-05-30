@@ -2,17 +2,16 @@ import { useEffect, useRef } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 
 const placeholderBars = Array.from({ length: 72 }, (_, index) => 18 + ((index * 17) % 58))
-const basePxPerSec = 24
 
 type AudioWaveformProps = {
   audioUrl?: string
-  zoom: number
+  pixelsPerSecond: number
 }
 
-export function AudioWaveform({ audioUrl, zoom }: AudioWaveformProps) {
+export function AudioWaveform({ audioUrl, pixelsPerSecond }: AudioWaveformProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const wavesurferRef = useRef<WaveSurfer | null>(null)
-  const zoomRef = useRef(zoom)
+  const pixelsPerSecondRef = useRef(pixelsPerSecond)
 
   useEffect(() => {
     if (!audioUrl || !containerRef.current) return
@@ -28,7 +27,7 @@ export function AudioWaveform({ audioUrl, zoom }: AudioWaveformProps) {
       url: audioUrl,
       fillParent: true,
       hideScrollbar: true,
-      minPxPerSec: basePxPerSec * zoomRef.current,
+      minPxPerSec: pixelsPerSecondRef.current,
     })
     wavesurferRef.current = wavesurfer
 
@@ -39,9 +38,9 @@ export function AudioWaveform({ audioUrl, zoom }: AudioWaveformProps) {
   }, [audioUrl])
 
   useEffect(() => {
-    zoomRef.current = zoom
-    wavesurferRef.current?.zoom(basePxPerSec * zoom)
-  }, [zoom])
+    pixelsPerSecondRef.current = pixelsPerSecond
+    wavesurferRef.current?.zoom(pixelsPerSecond)
+  }, [pixelsPerSecond])
 
   if (audioUrl) {
     return <div ref={containerRef} className="waveform" />

@@ -1,8 +1,10 @@
 import type { CaptionGroup } from '../types'
 import { formatSeconds } from '../lib/captioning'
+import { getTimelineTicks, type TimelineScalePreset } from '../lib/timelineScale'
 
 type CaptionTimelineProps = {
   groups: CaptionGroup[]
+  scale: TimelineScalePreset
   selectedGroupId?: string
   onSelect: (groupId: string) => void
   onPlayGroup: (groupId: string) => void
@@ -10,18 +12,22 @@ type CaptionTimelineProps = {
 
 export function CaptionTimeline({
   groups,
+  scale,
   selectedGroupId,
   onSelect,
   onPlayGroup,
 }: CaptionTimelineProps) {
   const duration = Math.max(...groups.map((group) => group.end), 1)
+  const ticks = getTimelineTicks(duration, scale.majorTickSeconds)
 
   return (
     <section className="timeline-panel">
       <div className="timeline-scale">
-        <span>0:00</span>
-        <span>{formatSeconds(duration / 2)}</span>
-        <span>{formatSeconds(duration)}</span>
+        {ticks.map((tick) => (
+          <span key={tick} style={{ left: `${(tick / duration) * 100}%` }}>
+            {formatSeconds(tick)}
+          </span>
+        ))}
       </div>
       <div className="caption-track">
         {groups.map((group) => {

@@ -324,9 +324,17 @@ h2 {
 }
 
 .zoom-control strong {
-  min-width: 42px;
+  min-width: 72px;
   color: var(--heading);
   text-align: right;
+}
+
+.zoom-control em {
+  min-width: 68px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  text-align: left;
 }
 
 .timeline-stack {
@@ -373,10 +381,26 @@ h2 {
 }
 
 .timeline-scale {
-  justify-content: space-between;
+  position: relative;
+  height: 16px;
   margin-bottom: 10px;
   font-size: 11px;
   color: var(--muted);
+}
+
+.timeline-scale span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.timeline-scale span:first-child {
+  transform: none;
+}
+
+.timeline-scale span:last-child {
+  transform: translateX(-100%);
 }
 
 .caption-track {
@@ -387,7 +411,8 @@ h2 {
   overflow: hidden;
   border-radius: 8px;
   background:
-    repeating-linear-gradient(90deg, rgba(19, 64, 57, 0.07) 0 1px, transparent 1px 7.5%),
+    repeating-linear-gradient(90deg, rgba(19, 64, 57, 0.12) 0 1px, transparent 1px var(--major-grid)),
+    repeating-linear-gradient(90deg, rgba(19, 64, 57, 0.055) 0 1px, transparent 1px var(--minor-grid)),
     #f8fbf9;
 }
 
