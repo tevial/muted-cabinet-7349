@@ -7,6 +7,10 @@ export const defaultGroupingSettings: GroupingSettings = {
   pauseThreshold: 0.42,
 }
 
+export const timingNudgeStep = 0.05
+
+const minGroupDuration = 0.04
+
 const connectorWords = new Set([
   'а',
   'але',
@@ -38,6 +42,22 @@ const normalizeWord = (text: string) =>
 export const isConnectorWord = (text: string) => connectorWords.has(normalizeWord(text))
 
 const getGroupText = (words: CaptionWord[]) => words.map((word) => word.text).join(' ')
+
+const roundTime = (seconds: number) => Math.round(seconds * 1000) / 1000
+
+export const setGroupTiming = (group: CaptionGroup, start: number, end: number): CaptionGroup => {
+  const safeStart = Math.max(0, roundTime(Number.isFinite(start) ? start : group.start))
+  const safeEnd = Math.max(safeStart + minGroupDuration, roundTime(Number.isFinite(end) ? end : group.end))
+
+  return {
+    ...group,
+    start: safeStart,
+    end: safeEnd,
+  }
+}
+
+export const shiftGroupTiming = (group: CaptionGroup, offset: number): CaptionGroup =>
+  setGroupTiming(group, group.start + offset, group.end + offset)
 
 export const groupWords = (
   words: CaptionWord[],
@@ -148,4 +168,3 @@ export const downloadTextFile = (filename: string, content: string) => {
   link.click()
   URL.revokeObjectURL(url)
 }
-

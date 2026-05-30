@@ -1,4 +1,4 @@
-import { Combine, Play, Scissors, StepForward } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Combine, Play, Scissors, StepForward } from 'lucide-react'
 
 import type { CaptionGroup, CaptionWord } from '../types'
 import { formatSeconds } from '../lib/captioning'
@@ -9,9 +9,12 @@ type CaptionEditorProps = {
   selectedGroupId?: string
   onSelect: (groupId: string) => void
   onTextChange: (groupId: string, text: string) => void
+  onTimingChange: (groupId: string, start: number, end: number) => void
+  onNudgeTiming: (groupId: string, offset: number) => void
   onPlayGroup: (groupId: string) => void
   onSplit: (groupId: string) => void
   onMergeNext: (groupId: string) => void
+  timingNudgeStep: number
 }
 
 export function CaptionEditor({
@@ -20,9 +23,12 @@ export function CaptionEditor({
   selectedGroupId,
   onSelect,
   onTextChange,
+  onTimingChange,
+  onNudgeTiming,
   onPlayGroup,
   onSplit,
   onMergeNext,
+  timingNudgeStep,
 }: CaptionEditorProps) {
   const wordMap = new Map(words.map((word) => [word.id, word]))
 
@@ -48,9 +54,31 @@ export function CaptionEditor({
               onClick={() => onSelect(group.id)}
             >
               <div className="caption-row-time">
-                <span>{formatSeconds(group.start)}</span>
+                <label className="time-field">
+                  <span>Start</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={group.start.toFixed(2)}
+                    onChange={(event) => onTimingChange(group.id, Number(event.target.value), group.end)}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`Start time ${group.id}`}
+                  />
+                </label>
                 <StepForward size={14} />
-                <span>{formatSeconds(group.end)}</span>
+                <label className="time-field">
+                  <span>End</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={group.end.toFixed(2)}
+                    onChange={(event) => onTimingChange(group.id, group.start, Number(event.target.value))}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`End time ${group.id}`}
+                  />
+                </label>
               </div>
 
               <input
@@ -70,6 +98,20 @@ export function CaptionEditor({
               <div className="row-actions">
                 <button type="button" title="Play this group" onClick={() => onPlayGroup(group.id)}>
                   <Play size={15} />
+                </button>
+                <button
+                  type="button"
+                  title={`Nudge ${timingNudgeStep.toFixed(2)}s earlier`}
+                  onClick={() => onNudgeTiming(group.id, -timingNudgeStep)}
+                >
+                  <ChevronLeft size={15} />
+                </button>
+                <button
+                  type="button"
+                  title={`Nudge ${timingNudgeStep.toFixed(2)}s later`}
+                  onClick={() => onNudgeTiming(group.id, timingNudgeStep)}
+                >
+                  <ChevronRight size={15} />
                 </button>
                 <button type="button" title="Split this group" onClick={() => onSplit(group.id)}>
                   <Scissors size={15} />

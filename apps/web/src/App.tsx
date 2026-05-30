@@ -16,6 +16,9 @@ import {
   exportSrt,
   groupWords,
   rebuildGroupTiming,
+  setGroupTiming,
+  shiftGroupTiming,
+  timingNudgeStep,
 } from './lib/captioning'
 import { createSavedProject, loadProject, saveProject } from './lib/projectStorage'
 import type { CaptionGroup, CaptionWord, GroupingSettings } from './types'
@@ -77,7 +80,7 @@ function App() {
 
   const handleRegroup = () => {
     setActiveGroups(groupWords(words, settings))
-    setStatus('Groups rebuilt from original word timestamps. Manual text edits in groups were reset.')
+    setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
   }
 
   const handleTranscribe = async () => {
@@ -101,6 +104,20 @@ function App() {
     setGroups((current) =>
       current.map((group) => (group.id === groupId ? { ...group, textOverride: text } : group)),
     )
+  }
+
+  const updateGroupTiming = (groupId: string, start: number, end: number) => {
+    setGroups((current) =>
+      current.map((group) => (group.id === groupId ? setGroupTiming(group, start, end) : group)),
+    )
+  }
+
+  const nudgeGroupTiming = (groupId: string, offset: number) => {
+    setGroups((current) =>
+      current.map((group) => (group.id === groupId ? shiftGroupTiming(group, offset) : group)),
+    )
+    setSelectedGroupId(groupId)
+    setStatus(`Group timing nudged ${Math.abs(offset).toFixed(2)}s ${offset < 0 ? 'earlier' : 'later'}.`)
   }
 
   const splitGroup = (groupId: string) => {
@@ -308,9 +325,12 @@ function App() {
             selectedGroupId={selectedGroupId}
             onSelect={setSelectedGroupId}
             onTextChange={updateGroupText}
+            onTimingChange={updateGroupTiming}
+            onNudgeTiming={nudgeGroupTiming}
             onPlayGroup={playGroup}
             onSplit={splitGroup}
             onMergeNext={mergeGroupWithNext}
+            timingNudgeStep={timingNudgeStep}
           />
         </section>
 
