@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tempfile import SpooledTemporaryFile
+from io import BytesIO
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -137,16 +137,13 @@ async def transcribe(
         raise HTTPException(status_code=400, detail="Missing upload filename.")
 
     client = OpenAI()
-    suffix = file.filename.rsplit(".", 1)[-1] if "." in file.filename else "wav"
-    temp = SpooledTemporaryFile(max_size=32 * 1024 * 1024, mode="w+b", suffix=f".{suffix}")
-    temp.write(await file.read())
-    temp.seek(0)
-    temp.name = file.filename
+    audio = BytesIO(await file.read())
+    audio.name = file.filename
 
     try:
         transcript = client.audio.transcriptions.create(
             model="whisper-1",
-            file=temp,
+            file=audio,
             language=language or None,
             response_format="verbose_json",
             timestamp_granularities=["word"],
@@ -154,7 +151,7 @@ async def transcribe(
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
-        temp.close()
+        audio.close()
 
     raw_words = getattr(transcript, "words", None) or []
     words = [
@@ -176,4 +173,3 @@ async def transcribe(
         words=words,
         groups=_to_group_payloads(grouped),
     )
-
