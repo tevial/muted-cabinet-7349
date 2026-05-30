@@ -28,6 +28,7 @@ import { createAudioFingerprint } from './lib/audioFingerprint'
 import { buildTimestampDebugReport } from './lib/debugReport'
 import {
   createSavedProject,
+  getStorageDebugSnapshot,
   loadProject,
   loadTranscriptionCache,
   saveProject,
@@ -47,6 +48,12 @@ const isEditableShortcutTarget = (target: EventTarget | null) => {
   return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
 }
 
+type TranscriptSource = {
+  audioFingerprint?: string
+  fileName?: string
+  fileSize?: number
+}
+
 function App() {
   const [savedProject] = useState(() => loadProject())
   const initialWords = savedProject?.words ?? sampleWords
@@ -57,6 +64,15 @@ function App() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(initialGroups[0]?.id)
   const [file, setFile] = useState<File | undefined>()
   const [audioFingerprint, setAudioFingerprint] = useState<string | undefined>()
+  const [transcriptSource, setTranscriptSource] = useState<TranscriptSource | undefined>(() =>
+    savedProject?.audioFingerprint
+      ? {
+          audioFingerprint: savedProject.audioFingerprint,
+          fileName: savedProject.fileName,
+          fileSize: savedProject.fileSize,
+        }
+      : undefined,
+  )
   const [audioUrl, setAudioUrl] = useState<string | undefined>()
   const [language, setLanguage] = useState(savedProject?.language ?? 'uk')
   const [status, setStatus] = useState(
@@ -100,12 +116,8 @@ function App() {
   } as CSSProperties
   const currentProject = useMemo(
     () =>
-      createSavedProject(language, words, groups, settings, {
-        audioFingerprint,
-        fileName: file?.name,
-        fileSize: file?.size,
-      }),
-    [audioFingerprint, file?.name, file?.size, groups, language, settings, words],
+      createSavedProject(language, words, groups, settings, transcriptSource),
+    [groups, language, settings, transcriptSource, words],
   )
 
   useEffect(() => {
@@ -203,6 +215,7 @@ function App() {
 
     return {
       fileName: savedProject.fileName ?? 'this audio',
+      fileSize: savedProject.fileSize,
       result: {
         text: savedProject.words.map((word) => word.text).join(' '),
         words: savedProject.words,
@@ -220,6 +233,11 @@ function App() {
 
     setWords(cachedTranscription.result.words)
     setActiveGroups(cachedTranscription.result.groups)
+    setTranscriptSource({
+      audioFingerprint: fingerprint,
+      fileName: sourceFile?.name ?? cachedTranscription.fileName,
+      fileSize: sourceFile?.size ?? cachedTranscription.fileSize,
+    })
     if (sourceFile) {
       saveTranscriptionCache(fingerprint, sourceFile, language, cachedTranscription.result)
     }
@@ -265,7 +283,20 @@ function App() {
       const fingerprint = await createAudioFingerprint(nextFile)
       setAudioFingerprint(fingerprint)
       const hasCache = Boolean(getCachedTranscription(fingerprint))
-      setStatus(hasCache ? 'Cached transcription is available for this file.' : 'File staged. No cached transcription found yet.')
+      const isSameTranscript = transcriptSource?.audioFingerprint === fingerprint
+
+      if (!isSameTranscript) {
+        setWords([])
+        setGroups([])
+        setSelectedGroupId(undefined)
+        setTranscriptSource(undefined)
+      }
+
+      setStatus(
+        hasCache
+          ? 'File staged. Cached transcription is available; use Load Cache or Transcribe fresh.'
+          : 'File staged. No cached transcription found yet.',
+      )
     } catch {
       setStatus('File staged. Could not create a local cache fingerprint.')
     }
@@ -289,6 +320,11 @@ function App() {
       const didCache = saveTranscriptionCache(fingerprint, file, language, result)
       setWords(result.words)
       setActiveGroups(result.groups)
+      setTranscriptSource({
+        audioFingerprint: fingerprint,
+        fileName: file.name,
+        fileSize: file.size,
+      })
       setStatus(
         didCache
           ? `Transcribed ${getTranscriptionSummary(result.words.length, result.groups.length)} and cached this audio locally.`
@@ -392,6 +428,7 @@ function App() {
   const handleCopyDebugReport = async () => {
     const debugReport = buildTimestampDebugReport({
       audioDuration,
+      audioFingerprint,
       emptyZoneCuts,
       fileName: file?.name,
       groups,
@@ -399,7 +436,9 @@ function App() {
       playheadTime,
       selectedGroupId,
       settings,
+      storageSnapshot: getStorageDebugSnapshot(),
       timelineDuration,
+      transcriptSource,
       words,
     })
 

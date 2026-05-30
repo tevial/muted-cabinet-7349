@@ -17,6 +17,7 @@ type TimestampDuplicate = {
 
 type BuildDebugReportInput = {
   audioDuration: number
+  audioFingerprint?: string
   emptyZoneCuts: EmptyZoneCut[]
   fileName?: string
   groups: CaptionGroup[]
@@ -24,7 +25,13 @@ type BuildDebugReportInput = {
   playheadTime: number
   selectedGroupId?: string
   settings: GroupingSettings
+  storageSnapshot: unknown
   timelineDuration: number
+  transcriptSource?: {
+    audioFingerprint?: string
+    fileName?: string
+    fileSize?: number
+  }
   words: CaptionWord[]
 }
 
@@ -62,6 +69,7 @@ const getDuplicateItems = <T extends { id: string }>(
 
 export const buildTimestampDebugReport = ({
   audioDuration,
+  audioFingerprint,
   emptyZoneCuts,
   fileName,
   groups,
@@ -69,7 +77,9 @@ export const buildTimestampDebugReport = ({
   playheadTime,
   selectedGroupId,
   settings,
+  storageSnapshot,
   timelineDuration,
+  transcriptSource,
   words,
 }: BuildDebugReportInput) => {
   const wordRows = words.map((word, index) => ({
@@ -91,6 +101,8 @@ export const buildTimestampDebugReport = ({
       source: 'capcut-caption-debug',
       fileName: fileName ?? null,
       language,
+      audioFingerprint: audioFingerprint ?? null,
+      transcriptSource: transcriptSource ?? null,
       timeline: {
         audioDuration: roundDebugTime(audioDuration),
         playheadTime: roundDebugTime(playheadTime),
@@ -104,6 +116,11 @@ export const buildTimestampDebugReport = ({
         emptyZoneCuts: cutRows.length,
       },
       diagnostics: {
+        sourceMismatch: Boolean(
+          audioFingerprint &&
+            transcriptSource?.audioFingerprint &&
+            audioFingerprint !== transcriptSource.audioFingerprint,
+        ),
         duplicateWordStarts: getDuplicateItems(wordRows, (word) => String(word.start)),
         duplicateWordRanges: getDuplicateItems(wordRows, (word) => `${word.start}-${word.end}`),
         duplicateGroupStarts: getDuplicateItems(groupRows, (group) => String(group.start)),
@@ -114,6 +131,7 @@ export const buildTimestampDebugReport = ({
       words: wordRows,
       groups: groupRows,
       emptyZoneCuts: cutRows,
+      localStorage: storageSnapshot,
     },
     null,
     2,
