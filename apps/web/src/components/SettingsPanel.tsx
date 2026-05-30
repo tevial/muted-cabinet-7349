@@ -1,22 +1,46 @@
 import type { GroupingSettings } from '../types'
 
+export type CaptionStats = {
+  words: number
+  groups: number
+  averageWords: string
+  duration: string
+}
+
 type SettingsPanelProps = {
   language: string
+  stats: CaptionStats
   settings: GroupingSettings
   onLanguageChange: (language: string) => void
   onChange: (settings: GroupingSettings) => void
 }
 
-export function SettingsPanel({ language, settings, onLanguageChange, onChange }: SettingsPanelProps) {
+export function SettingsPanel({ language, stats, settings, onLanguageChange, onChange }: SettingsPanelProps) {
   const update = (key: keyof GroupingSettings, value: number) => {
     onChange({ ...settings, [key]: value })
   }
+
+  const statItems = [
+    { label: 'Words', value: stats.words },
+    { label: 'Blocks', value: stats.groups },
+    { label: 'Words/block', value: stats.averageWords },
+    { label: 'Range', value: stats.duration },
+  ]
 
   return (
     <aside className="panel settings-panel">
       <div className="panel-heading">
         <p className="panel-kicker">Grouping</p>
         <h2>Caption rules</h2>
+      </div>
+
+      <div className="mini-stats" aria-label="Caption statistics">
+        {statItems.map((item) => (
+          <div key={item.label}>
+            <span>{item.value}</span>
+            <p>{item.label}</p>
+          </div>
+        ))}
       </div>
 
       <label className="field">

@@ -72,6 +72,15 @@ function App() {
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const timelineDuration = Math.max(totalDuration, audioDuration, playheadTime, 1)
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
+  const captionStats = useMemo(
+    () => ({
+      words: words.length,
+      groups: groups.length,
+      averageWords,
+      duration: `${totalDuration.toFixed(1)}s`,
+    }),
+    [averageWords, groups.length, totalDuration, words.length],
+  )
   const timelineScale = getTimelineScalePreset(timelineScaleIndex)
   const timelineWidth = getTimelineWidth(timelineDuration, timelineScale.pixelsPerSecond)
   const timelineContentStyle = {
@@ -590,25 +599,6 @@ function App() {
             <span>{status}</span>
           </div>
 
-          <div className="metrics-row">
-            <div>
-              <span>{words.length}</span>
-              <p>Words</p>
-            </div>
-            <div>
-              <span>{groups.length}</span>
-              <p>Caption blocks</p>
-            </div>
-            <div>
-              <span>{averageWords}</span>
-              <p>Words per block</p>
-            </div>
-            <div>
-              <span>{totalDuration.toFixed(1)}s</span>
-              <p>Timed range</p>
-            </div>
-          </div>
-
           <section className="playback-panel">
             <audio
               ref={audioRef}
@@ -685,6 +675,7 @@ function App() {
         <div className="right-rail">
           <SettingsPanel
             language={language}
+            stats={captionStats}
             settings={settings}
             onLanguageChange={setLanguage}
             onChange={setSettings}
