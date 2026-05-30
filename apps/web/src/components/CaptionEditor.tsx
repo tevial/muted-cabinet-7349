@@ -101,14 +101,14 @@ export function CaptionEditor({
                 </button>
                 <button
                   type="button"
-                  title={`Nudge ${timingNudgeStep.toFixed(2)}s earlier`}
+                  title={`Move start ${timingNudgeStep.toFixed(2)}s earlier`}
                   onClick={() => onNudgeTiming(group.id, -timingNudgeStep)}
                 >
                   <ChevronLeft size={15} />
                 </button>
                 <button
                   type="button"
-                  title={`Nudge ${timingNudgeStep.toFixed(2)}s later`}
+                  title={`Move start ${timingNudgeStep.toFixed(2)}s later`}
                   onClick={() => onNudgeTiming(group.id, timingNudgeStep)}
                 >
                   <ChevronRight size={15} />

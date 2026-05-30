@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 
 const placeholderBars = Array.from({ length: 72 }, (_, index) => 18 + ((index * 17) % 58))
+const basePxPerSec = 24
 
 type AudioWaveformProps = {
   audioUrl?: string
@@ -11,6 +12,7 @@ type AudioWaveformProps = {
 export function AudioWaveform({ audioUrl, zoom }: AudioWaveformProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const wavesurferRef = useRef<WaveSurfer | null>(null)
+  const zoomRef = useRef(zoom)
 
   useEffect(() => {
     if (!audioUrl || !containerRef.current) return
@@ -24,7 +26,9 @@ export function AudioWaveform({ audioUrl, zoom }: AudioWaveformProps) {
       barWidth: 2,
       barGap: 2,
       url: audioUrl,
-      minPxPerSec: 24,
+      fillParent: true,
+      hideScrollbar: true,
+      minPxPerSec: basePxPerSec * zoomRef.current,
     })
     wavesurferRef.current = wavesurfer
 
@@ -35,28 +39,19 @@ export function AudioWaveform({ audioUrl, zoom }: AudioWaveformProps) {
   }, [audioUrl])
 
   useEffect(() => {
-    wavesurferRef.current?.zoom(24 * zoom)
+    zoomRef.current = zoom
+    wavesurferRef.current?.zoom(basePxPerSec * zoom)
   }, [zoom])
 
   if (audioUrl) {
-    return (
-      <div className="waveform-scroll">
-        <div ref={containerRef} className="waveform" />
-      </div>
-    )
+    return <div ref={containerRef} className="waveform" />
   }
 
   return (
-    <div className="waveform-scroll">
-      <div
-        className="waveform waveform-placeholder"
-        aria-label="Waveform placeholder"
-        style={{ width: `${Math.max(100, zoom * 100)}%` }}
-      >
-        {placeholderBars.map((height, index) => (
-          <span key={index} style={{ height }} />
-        ))}
-      </div>
+    <div className="waveform waveform-placeholder" aria-label="Waveform placeholder">
+      {placeholderBars.map((height, index) => (
+        <span key={index} style={{ height }} />
+      ))}
     </div>
   )
 }

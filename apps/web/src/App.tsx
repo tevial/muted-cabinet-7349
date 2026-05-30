@@ -15,9 +15,10 @@ import {
   downloadTextFile,
   exportSrt,
   groupWords,
+  normalizeGroupTimings,
+  nudgeGroupBoundary,
   rebuildGroupTiming,
-  setGroupTiming,
-  shiftGroupTiming,
+  setGroupBoundary,
   timingNudgeStep,
 } from './lib/captioning'
 import { createSavedProject, loadProject, saveProject } from './lib/projectStorage'
@@ -26,7 +27,7 @@ import type { CaptionGroup, CaptionWord, GroupingSettings } from './types'
 function App() {
   const [savedProject] = useState(() => loadProject())
   const initialWords = savedProject?.words ?? sampleWords
-  const initialGroups = savedProject?.groups ?? groupWords(initialWords)
+  const initialGroups = normalizeGroupTimings(savedProject?.groups ?? groupWords(initialWords))
   const [words, setWords] = useState<CaptionWord[]>(initialWords)
   const [groups, setGroups] = useState<CaptionGroup[]>(initialGroups)
   const [settings, setSettings] = useState<GroupingSettings>(savedProject?.settings ?? defaultGroupingSettings)
@@ -45,6 +46,7 @@ function App() {
 
   const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
   const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
+  const timelineWidth = `${Math.max(100, timelineZoom * 100)}%`
   const currentProject = useMemo(
     () => createSavedProject(language, words, groups, settings),
     [groups, language, settings, words],
@@ -61,8 +63,9 @@ function App() {
   }, [currentProject])
 
   const setActiveGroups = (nextGroups: CaptionGroup[]) => {
-    setGroups(nextGroups)
-    setSelectedGroupId((current) => current && nextGroups.some((group) => group.id === current) ? current : nextGroups[0]?.id)
+    const normalizedGroups = normalizeGroupTimings(nextGroups)
+    setGroups(normalizedGroups)
+    setSelectedGroupId((current) => current && normalizedGroups.some((group) => group.id === current) ? current : normalizedGroups[0]?.id)
   }
 
   const handleFileChange = (nextFile: File) => {
@@ -107,17 +110,13 @@ function App() {
   }
 
   const updateGroupTiming = (groupId: string, start: number, end: number) => {
-    setGroups((current) =>
-      current.map((group) => (group.id === groupId ? setGroupTiming(group, start, end) : group)),
-    )
+    setGroups((current) => setGroupBoundary(current, groupId, start, end))
   }
 
   const nudgeGroupTiming = (groupId: string, offset: number) => {
-    setGroups((current) =>
-      current.map((group) => (group.id === groupId ? shiftGroupTiming(group, offset) : group)),
-    )
+    setGroups((current) => nudgeGroupBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
-    setStatus(`Group timing nudged ${Math.abs(offset).toFixed(2)}s ${offset < 0 ? 'earlier' : 'later'}.`)
+    setStatus(`Group start nudged ${Math.abs(offset).toFixed(2)}s ${offset < 0 ? 'earlier' : 'later'}.`)
   }
 
   const splitGroup = (groupId: string) => {
@@ -300,7 +299,7 @@ function App() {
               <input
                 type="range"
                 min={1}
-                max={8}
+                max={32}
                 step={0.5}
                 value={timelineZoom}
                 onChange={(event) => setTimelineZoom(Number(event.target.value))}
@@ -309,15 +308,20 @@ function App() {
             </label>
           </section>
 
-          <AudioWaveform audioUrl={audioUrl} zoom={timelineZoom} />
+          <section className="timeline-stack">
+            <div className="timeline-scroll">
+              <div className="timeline-content" style={{ width: timelineWidth }}>
+                <AudioWaveform audioUrl={audioUrl} zoom={timelineZoom} />
 
-          <CaptionTimeline
-            groups={groups}
-            zoom={timelineZoom}
-            selectedGroupId={selectedGroupId}
-            onSelect={setSelectedGroupId}
-            onPlayGroup={playGroup}
-          />
+                <CaptionTimeline
+                  groups={groups}
+                  selectedGroupId={selectedGroupId}
+                  onSelect={setSelectedGroupId}
+                  onPlayGroup={playGroup}
+                />
+              </div>
+            </div>
+          </section>
 
           <CaptionEditor
             groups={groups}

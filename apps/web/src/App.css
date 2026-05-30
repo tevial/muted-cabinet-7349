@@ -319,7 +319,7 @@ h2 {
 }
 
 .zoom-control input {
-  width: min(320px, 32vw);
+  width: min(420px, 38vw);
   accent-color: #14927f;
 }
 
@@ -329,19 +329,28 @@ h2 {
   text-align: right;
 }
 
+.timeline-stack {
+  min-width: 0;
+}
+
+.timeline-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
+.timeline-content {
+  display: grid;
+  min-width: 100%;
+  gap: 10px;
+}
+
 .waveform {
   min-height: 112px;
   min-width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: linear-gradient(180deg, #ffffff, #f7faf8);
-}
-
-.waveform-scroll,
-.caption-track-scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 2px;
 }
 
 .waveform-placeholder {
@@ -372,6 +381,7 @@ h2 {
 
 .caption-track {
   position: relative;
+  width: 100%;
   min-width: 100%;
   height: 74px;
   overflow: hidden;
@@ -383,6 +393,7 @@ h2 {
 
 .caption-chip {
   position: absolute;
+  box-sizing: border-box;
   top: 16px;
   height: 42px;
   overflow: hidden;

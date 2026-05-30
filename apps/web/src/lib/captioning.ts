@@ -45,19 +45,66 @@ const getGroupText = (words: CaptionWord[]) => words.map((word) => word.text).jo
 
 const roundTime = (seconds: number) => Math.round(seconds * 1000) / 1000
 
-export const setGroupTiming = (group: CaptionGroup, start: number, end: number): CaptionGroup => {
-  const safeStart = Math.max(0, roundTime(Number.isFinite(start) ? start : group.start))
-  const safeEnd = Math.max(safeStart + minGroupDuration, roundTime(Number.isFinite(end) ? end : group.end))
+const getSafeTime = (seconds: number, fallback: number) =>
+  roundTime(Number.isFinite(seconds) ? seconds : fallback)
 
-  return {
-    ...group,
-    start: safeStart,
-    end: safeEnd,
-  }
+export const normalizeGroupTimings = (groups: CaptionGroup[]): CaptionGroup[] => {
+  const groupsWithSafeStarts = groups.reduce<CaptionGroup[]>((normalized, group) => {
+    const previous = normalized.at(-1)
+    const minStart = previous ? previous.start + minGroupDuration : 0
+    const start = Math.max(minStart, getSafeTime(group.start, minStart))
+
+    normalized.push({
+      ...group,
+      start,
+    })
+
+    return normalized
+  }, [])
+
+  return groupsWithSafeStarts.map((group, index) => {
+    const next = groupsWithSafeStarts[index + 1]
+    const end = next ? next.start : Math.max(group.start + minGroupDuration, getSafeTime(group.end, group.start))
+
+    return {
+      ...group,
+      start: roundTime(group.start),
+      end: roundTime(end),
+    }
+  })
 }
 
-export const shiftGroupTiming = (group: CaptionGroup, offset: number): CaptionGroup =>
-  setGroupTiming(group, group.start + offset, group.end + offset)
+export const setGroupBoundary = (
+  groups: CaptionGroup[],
+  groupId: string,
+  start: number,
+  end: number,
+): CaptionGroup[] => {
+  const groupIndex = groups.findIndex((group) => group.id === groupId)
+  if (groupIndex === -1) return groups
+
+  const nextGroups = groups.map((group) => ({ ...group }))
+  nextGroups[groupIndex].start = getSafeTime(start, nextGroups[groupIndex].start)
+
+  if (groupIndex < nextGroups.length - 1) {
+    nextGroups[groupIndex + 1].start = getSafeTime(end, nextGroups[groupIndex + 1].start)
+  } else {
+    nextGroups[groupIndex].end = getSafeTime(end, nextGroups[groupIndex].end)
+  }
+
+  return normalizeGroupTimings(nextGroups)
+}
+
+export const nudgeGroupBoundary = (
+  groups: CaptionGroup[],
+  groupId: string,
+  offset: number,
+): CaptionGroup[] => {
+  const group = groups.find((item) => item.id === groupId)
+  if (!group) return groups
+
+  return setGroupBoundary(groups, groupId, group.start + offset, group.end)
+}
 
 export const groupWords = (
   words: CaptionWord[],
@@ -114,7 +161,7 @@ export const groupWords = (
   })
 
   commit()
-  return groups
+  return normalizeGroupTimings(groups)
 }
 
 export const rebuildGroupTiming = (group: CaptionGroup, words: CaptionWord[]): CaptionGroup => {
@@ -126,12 +173,12 @@ export const rebuildGroupTiming = (group: CaptionGroup, words: CaptionWord[]): C
   const first = groupWords[0]
   const last = groupWords[groupWords.length - 1]
 
-  return {
+  return normalizeGroupTimings([{
     ...group,
     text: getGroupText(groupWords),
     start: first.start,
     end: last.end,
-  }
+  }])[0]
 }
 
 export const formatSeconds = (seconds: number) => {
