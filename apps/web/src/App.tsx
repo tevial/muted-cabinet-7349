@@ -25,7 +25,16 @@ import {
   timingNudgeStep,
 } from './lib/captioning'
 import { createAudioFingerprint } from './lib/audioFingerprint'
-import { flowLog, flowWarn, shortFingerprint, summarizeFile, summarizeTranscription } from './lib/flowLogger'
+import {
+  flowLog,
+  flowTimedTable,
+  flowWarn,
+  shortFingerprint,
+  summarizeFile,
+  summarizeTimedItems,
+  summarizeTimestampDiagnostics,
+  summarizeTranscription,
+} from './lib/flowLogger'
 import {
   createSavedProject,
   getTranscriptionCacheMeta,
@@ -88,6 +97,11 @@ function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const timelineScrollRef = useRef<HTMLDivElement | null>(null)
   const autosaveLogKeyRef = useRef<string | undefined>(undefined)
+  const wordMutationSourceRef = useRef('boot')
+  const groupMutationSourceRef = useRef('boot')
+  const wordSnapshotRef = useRef<string | undefined>(undefined)
+  const groupSnapshotRef = useRef<string | undefined>(undefined)
+  const settingsSnapshotRef = useRef<string | undefined>(undefined)
   const bootFlowLogRef = useRef({
     restoredProject: Boolean(savedProject),
     words: initialWords.length,
@@ -137,6 +151,62 @@ function App() {
   useEffect(() => {
     flowLog('boot', bootFlowLogRef.current)
   }, [])
+
+  const shouldPrintStateTable = (source: string) =>
+    source.includes('transcribe') || source.includes('cache') || source.includes('regroup')
+
+  const getTimedSignature = (
+    items: Array<Pick<CaptionWord, 'id' | 'start' | 'end' | 'text'> & { textOverride?: string }>,
+  ) => items.map((item) => `${item.id}:${item.start}:${item.end}:${item.text}:${item.textOverride ?? ''}`).join('|')
+
+  useEffect(() => {
+    const signature = getTimedSignature(words)
+    if (signature === wordSnapshotRef.current) return
+    wordSnapshotRef.current = signature
+
+    const source = wordMutationSourceRef.current
+    flowLog('words state: committed', {
+      source,
+      summary: summarizeTimedItems(words),
+      diagnostics: summarizeTimestampDiagnostics({ words }),
+    })
+    if (shouldPrintStateTable(source)) {
+      flowTimedTable('words state table', words, { source })
+    }
+  }, [words])
+
+  useEffect(() => {
+    const signature = getTimedSignature(groups)
+    if (signature === groupSnapshotRef.current) return
+    groupSnapshotRef.current = signature
+
+    const source = groupMutationSourceRef.current
+    flowLog('groups state: committed', {
+      source,
+      summary: summarizeTimedItems(groups),
+      diagnostics: summarizeTimestampDiagnostics({ groups }),
+    })
+    if (shouldPrintStateTable(source)) {
+      flowTimedTable('groups state table', groups, { source })
+    }
+  }, [groups])
+
+  useEffect(() => {
+    const signature = JSON.stringify(settings)
+    if (settingsSnapshotRef.current === undefined) {
+      settingsSnapshotRef.current = signature
+      return
+    }
+    if (signature === settingsSnapshotRef.current) return
+
+    settingsSnapshotRef.current = signature
+    flowLog('caption rules: changed', {
+      settings,
+      words: words.length,
+      groups: groups.length,
+      note: 'Groups are recalculated when Regroup runs.',
+    })
+  }, [groups.length, settings, words.length])
 
   useEffect(() => {
     return () => {
@@ -228,8 +298,24 @@ function App() {
     return nextTime
   }, [audioUrl, keepPlayheadInView, timelineDuration])
 
-  const setActiveGroups = (nextGroups: CaptionGroup[]) => {
+  const setActiveGroups = (
+    nextGroups: CaptionGroup[],
+    source = 'groups write',
+    details?: Record<string, unknown>,
+  ) => {
     const normalizedGroups = normalizeGroupTimings(nextGroups)
+    groupMutationSourceRef.current = source
+    flowLog('groups write: prepared', {
+      source,
+      ...details,
+      incoming: summarizeTimedItems(nextGroups),
+      normalized: summarizeTimedItems(normalizedGroups),
+      incomingDiagnostics: summarizeTimestampDiagnostics({ groups: nextGroups }),
+      normalizedDiagnostics: summarizeTimestampDiagnostics({ groups: normalizedGroups }),
+    })
+    if (shouldPrintStateTable(source)) {
+      flowTimedTable('groups write table', normalizedGroups, { source })
+    }
     setGroups(normalizedGroups)
     setSelectedGroupId((current) => current && normalizedGroups.some((group) => group.id === current) ? current : normalizedGroups[0]?.id)
   }
@@ -273,8 +359,26 @@ function App() {
       return false
     }
 
+    flowLog('cache load: payload', {
+      fingerprint: shortFingerprint(fingerprint),
+      result: summarizeTranscription(cachedTranscription.result),
+      diagnostics: summarizeTimestampDiagnostics({
+        words: cachedTranscription.result.words,
+        groups: cachedTranscription.result.groups,
+      }),
+    })
+    flowTimedTable('cache load words table', cachedTranscription.result.words, {
+      fingerprint: shortFingerprint(fingerprint),
+    })
+    flowTimedTable('cache load groups table', cachedTranscription.result.groups, {
+      fingerprint: shortFingerprint(fingerprint),
+    })
+    wordMutationSourceRef.current = 'cache load'
     setWords(cachedTranscription.result.words)
-    setActiveGroups(cachedTranscription.result.groups)
+    setActiveGroups(cachedTranscription.result.groups, 'cache load', {
+      fingerprint: shortFingerprint(fingerprint),
+      fileName: cachedTranscription.fileName,
+    })
     setTranscriptSource({
       audioFingerprint: fingerprint,
       fileName: sourceFile?.name ?? cachedTranscription.fileName,
@@ -292,6 +396,10 @@ function App() {
       fingerprint: shortFingerprint(fingerprint),
       fileName: cachedTranscription.fileName,
       result: summarizeTranscription(cachedTranscription.result),
+      diagnostics: summarizeTimestampDiagnostics({
+        words: cachedTranscription.result.words,
+        groups: cachedTranscription.result.groups,
+      }),
     })
     setStatus(
       `Loaded cached transcription for ${cachedTranscription.fileName}: ${getTranscriptionSummary(
@@ -356,6 +464,8 @@ function App() {
       })
 
       if (!isSameTranscript) {
+        wordMutationSourceRef.current = 'upload: clear stale transcript'
+        groupMutationSourceRef.current = 'upload: clear stale transcript'
         setWords([])
         setGroups([])
         setSelectedGroupId(undefined)
@@ -387,12 +497,20 @@ function App() {
 
   const handleRegroup = () => {
     stopPlayback()
+    const nextGroups = groupWords(words, settings)
     flowLog('regroup: local rebuild', {
+      words: words.length,
+      previousGroups: groups.length,
+      nextGroups: nextGroups.length,
+      settings,
+      diagnostics: summarizeTimestampDiagnostics({ words, groups: nextGroups }),
+    })
+    flowTimedTable('regroup source words table', words, { settings })
+    setActiveGroups(nextGroups, 'regroup: local rebuild', {
       words: words.length,
       previousGroups: groups.length,
       settings,
     })
-    setActiveGroups(groupWords(words, settings))
     setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
   }
 
@@ -422,6 +540,13 @@ function App() {
       flowLog('transcribe: response', {
         fingerprint: shortFingerprint(fingerprint),
         result: summarizeTranscription(result),
+        diagnostics: summarizeTimestampDiagnostics({ words: result.words, groups: result.groups }),
+      })
+      flowTimedTable('transcribe received words table', result.words, {
+        fingerprint: shortFingerprint(fingerprint),
+      })
+      flowTimedTable('transcribe received groups table', result.groups, {
+        fingerprint: shortFingerprint(fingerprint),
       })
       const cacheWrite = saveTranscriptionCache(fingerprint, file, language, result)
       flowLog('cache write: transcription', {
@@ -432,8 +557,12 @@ function App() {
         bytes: cacheWrite.bytes,
         key: cacheWrite.key,
       })
+      wordMutationSourceRef.current = 'transcribe: response'
       setWords(result.words)
-      setActiveGroups(result.groups)
+      setActiveGroups(result.groups, 'transcribe: response', {
+        fingerprint: shortFingerprint(fingerprint),
+        cacheWriteOk: cacheWrite.ok,
+      })
       setTranscriptSource({
         audioFingerprint: fingerprint,
         fileName: file.name,
@@ -464,22 +593,26 @@ function App() {
   }
 
   const updateGroupText = (groupId: string, text: string) => {
+    groupMutationSourceRef.current = 'group text edit'
     setGroups((current) =>
       current.map((group) => (group.id === groupId ? { ...group, textOverride: text } : group)),
     )
   }
 
   const updateGroupTiming = (groupId: string, start: number, end: number) => {
+    groupMutationSourceRef.current = 'group timing edit'
     setGroups((current) => setGroupBoundary(current, groupId, start, end))
   }
 
   const nudgeGroupStart = useCallback((groupId: string, offset: number) => {
+    groupMutationSourceRef.current = 'group start nudge'
     setGroups((current) => nudgeGroupStartBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group start nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
   }, [])
 
   const nudgeGroupEnd = useCallback((groupId: string, offset: number) => {
+    groupMutationSourceRef.current = 'group end nudge'
     setGroups((current) => nudgeGroupEndBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group end nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
@@ -512,7 +645,9 @@ function App() {
       },
       words,
     )
-    setActiveGroups([...groups.slice(0, groupIndex), first, second, ...groups.slice(groupIndex + 1)])
+    setActiveGroups([...groups.slice(0, groupIndex), first, second, ...groups.slice(groupIndex + 1)], 'split group', {
+      groupId,
+    })
     setSelectedGroupId(second.id)
     setStatus('Group split while preserving word timestamps.')
   }
@@ -535,7 +670,9 @@ function App() {
       },
       words,
     )
-    setActiveGroups([...groups.slice(0, groupIndex), merged, ...groups.slice(groupIndex + 2)])
+    setActiveGroups([...groups.slice(0, groupIndex), merged, ...groups.slice(groupIndex + 2)], 'merge group', {
+      groupId,
+    })
     setSelectedGroupId(merged.id)
     setStatus('Groups merged from their existing word timestamps.')
   }
