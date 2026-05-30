@@ -1,0 +1,31 @@
+{
+  "name": "capcut-caption-architecture-guide",
+  "version": "0.1.0",
+  "description": "Architecture, documentation, module-boundary, and UI-boundary guide for CapCut Caption.",
+  "requiredDocs": [
+    "AGENTS.md",
+    "README.md",
+    "README guide.md",
+    "docs/README.md",
+    "docs/product/README.md",
+    "docs/product/brief.md",
+    "docs/product/glossary.md",
+    "docs/product/workflows.md",
+    "docs/product/domain-model.md",
+    "docs/product/requirements.md",
+    "docs/product/architecture-context.md",
+    "docs/catalog/modules.md",
+    "docs/catalog/ui-components.md",
+    "docs/module-boundaries.md",
+    "docs/ui-architecture.md",
+    "docs/reuse-patterns.md"
+  ],
+  "qualityGates": [
+    "Every durable feature has one owning module.",
+    "Caption words remain the source of truth for generated groups.",
+    "Provider groups are ingested through the caption domain before editor state writes.",
+    "Reusable logic is parameterized or consolidated.",
+    "Presentational UI receives props and emits events.",
+    "Catalog entries are updated for public modules/components."
+  ]
+}

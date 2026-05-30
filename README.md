@@ -6,12 +6,19 @@ CapCut Caption is a local caption-editing tool for short-form videos. It keeps w
 
 - `apps/web` - React + Vite caption editor.
 - `apps/api` - FastAPI backend for transcription and export helpers.
+- `apps/web/src/contracts` - shared browser-side caption data contracts.
+- `apps/web/src/domain/captions` - deterministic caption grouping, timing,
+  ingest, empty-zone, and export rules.
+- `apps/web/src/services` - browser/API/storage side-effect adapters.
+- `apps/web/src/features/caption-workbench` - main editor workflow.
+- `docs` - architecture rules, product context, and module/UI catalogs.
 
 ## MVP Flow
 
 1. Upload audio or video in the web app.
 2. Transcribe with OpenAI `whisper-1` word timestamps.
-3. Regroup words locally with deterministic caption rules.
+3. Ingest transcription words through the caption domain and rebuild groups
+   locally with deterministic caption rules.
 4. Edit split/merge/text in the UI.
 5. Export `.srt`.
 
