@@ -94,7 +94,7 @@ const capCutProjectGapPrefix = 'capcut_project_gap_'
 const capCutSourceCutPrefix = 'capcut_source_cut_'
 const capCutMarkerPrefix = 'capcut_marker_'
 const minDraftSelectionDuration = 0.1
-const capCutBoundaryDuration = 0.12
+const capCutBoundaryHitTargetWidth = 8
 const silenceAdjustmentMin = -0.45
 const silenceAdjustmentMax = 0.45
 const silenceAdjustmentStep = 0.01
@@ -190,6 +190,9 @@ const getSkipRegionContent = (start: number, end: number, isSelected: boolean) =
     height: '100%',
     overflow: 'hidden',
     padding: '0 8px',
+    background: isSelected
+      ? 'repeating-linear-gradient(135deg, rgba(226, 119, 75, 0.32) 0 6px, rgba(226, 119, 75, 0.14) 6px 12px)'
+      : 'repeating-linear-gradient(135deg, rgba(226, 119, 75, 0.18) 0 6px, rgba(226, 119, 75, 0.08) 6px 12px)',
     color: '#7a341d',
     fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
     fontSize: '11px',
@@ -278,6 +281,36 @@ const getRegionColor = (isSelected: boolean) =>
 
 const getSkipRegionColor = (isSelected: boolean) =>
   isSelected ? 'rgba(226, 119, 75, 0.32)' : 'rgba(226, 119, 75, 0.2)'
+
+const getCapCutPointRegionContent = (title: string, color: string, width = 2) => {
+  const content = document.createElement('span')
+  content.title = title
+  Object.assign(content.style, {
+    alignItems: 'stretch',
+    background: 'transparent',
+    boxSizing: 'border-box',
+    display: 'flex',
+    height: '100%',
+    justifyContent: 'center',
+    minWidth: '8px',
+    overflow: 'visible',
+    pointerEvents: 'auto',
+    width: '100%',
+  })
+
+  const line = document.createElement('span')
+  Object.assign(line.style, {
+    background: color,
+    borderRadius: '999px',
+    boxShadow: `0 0 0 1px ${color}`,
+    display: 'block',
+    height: '100%',
+    width: `${width}px`,
+  })
+
+  content.appendChild(line)
+  return content
+}
 
 const getCapCutRegionContent = (label: string, title: string, color: string, background: string) => {
   const content = document.createElement('span')
@@ -1677,6 +1710,7 @@ export const useWaveSurferTimeline = ({
 
     capCutRegionsPlugin.getRegions().forEach((region) => region.remove())
     if (!capCutTimelineMap) return
+    const pointHitTargetDuration = Math.max(0.001, capCutBoundaryHitTargetWidth / Math.max(zoomLevel, 1))
 
     capCutTimelineMap.projectGaps.forEach((gap) => {
       capCutRegionsPlugin.addRegion({
@@ -1696,19 +1730,18 @@ export const useWaveSurferTimeline = ({
     })
 
     capCutTimelineMap.sourceCutBoundaries.forEach((boundary) => {
-      const start = clamp(boundary.projectPosition - capCutBoundaryDuration / 2, 0, duration)
-      const end = clamp(boundary.projectPosition + capCutBoundaryDuration / 2, start + 0.001, duration)
+      const start = clamp(boundary.projectPosition - pointHitTargetDuration / 2, 0, duration)
+      const end = clamp(boundary.projectPosition + pointHitTargetDuration / 2, start + 0.001, duration)
       const isSelected = boundary.id === selectedCapCutSourceCutBoundaryId
       capCutRegionsPlugin.addRegion({
         id: `${capCutSourceCutPrefix}${boundary.id}`,
         start,
         end,
-        color: isSelected ? 'rgba(111, 75, 190, 0.42)' : 'rgba(111, 75, 190, 0.24)',
-        content: getCapCutRegionContent(
-          isSelected ? 'Cut' : '',
+        color: 'rgba(111, 75, 190, 0)',
+        content: getCapCutPointRegionContent(
           `CapCut source cut: hidden ${formatSeconds(boundary.hiddenSourceStart)} - ${formatSeconds(boundary.hiddenSourceEnd)}`,
-          isSelected ? '#372468' : '#4c367c',
-          isSelected ? 'rgba(111, 75, 190, 0.42)' : 'rgba(111, 75, 190, 0.28)',
+          isSelected ? '#372468' : '#6f4bbe',
+          isSelected ? 3 : 2,
         ),
         drag: false,
         resize: false,
@@ -1719,24 +1752,23 @@ export const useWaveSurferTimeline = ({
       const markerTime = marker.projectTime ?? marker.time
       if (markerTime === undefined || markerTime < 0 || markerTime > duration) return
 
-      const start = clamp(markerTime - capCutBoundaryDuration / 2, 0, duration)
-      const end = clamp(markerTime + capCutBoundaryDuration / 2, start + 0.001, duration)
+      const start = clamp(markerTime - pointHitTargetDuration / 2, 0, duration)
+      const end = clamp(markerTime + pointHitTargetDuration / 2, start + 0.001, duration)
       capCutRegionsPlugin.addRegion({
         id: `${capCutMarkerPrefix}${marker.id}`,
         start,
         end,
-        color: 'rgba(0, 193, 205, 0.22)',
-        content: getCapCutRegionContent(
-          marker.title ? 'M' : '',
+        color: 'rgba(0, 193, 205, 0)',
+        content: getCapCutPointRegionContent(
           marker.title || `CapCut marker at ${formatSeconds(markerTime)}`,
           '#007983',
-          'rgba(0, 193, 205, 0.24)',
+          2,
         ),
         drag: false,
         resize: false,
       })
     })
-  }, [capCutTimelineMap, selectedCapCutSourceCutBoundaryId, skipRegionsReadyToken, timelineDuration])
+  }, [capCutTimelineMap, selectedCapCutSourceCutBoundaryId, skipRegionsReadyToken, timelineDuration, zoomLevel])
 
   useEffect(() => {
     const draftRegionsPlugin = draftRegionsPluginRef.current

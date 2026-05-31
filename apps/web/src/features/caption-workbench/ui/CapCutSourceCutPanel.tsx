@@ -66,7 +66,7 @@ export function CapCutSourceCutPanel({
         <audio className="source-cut-audio" src={preview.url} controls preload="metadata" />
       ) : null}
 
-      <p className="source-cut-note">Restore writes are the next CapCut draft step.</p>
+      <p className="source-cut-note">Restore is not available yet; this stage is preview-only.</p>
     </section>
   )
 }

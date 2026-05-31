@@ -716,14 +716,9 @@ h2 {
 }
 
 .waveform-lane ::part(region) {
-  border: 1px solid rgba(177, 73, 48, 0.42);
+  border: 1px solid transparent;
   border-radius: 6px;
-  background:
-    repeating-linear-gradient(
-      135deg,
-      rgba(226, 119, 75, 0.18) 0 6px,
-      rgba(226, 119, 75, 0.08) 6px 12px
-    ) !important;
+  background: transparent !important;
 }
 
 .waveform-lane ::part(region-handle) {
