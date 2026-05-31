@@ -1,12 +1,19 @@
 import { roundCaptionTime } from '../../../domain/captions'
 import type { EmptyZoneCut } from '../../../domain/captions'
 
-type SilenceDetectionOptions = {
-  idPrefix: string
+export type SilenceDetectionSettings = {
+  adaptiveNormalization: boolean
+  adaptiveWindowDuration: number
   mergeDuration: number
   minDuration: number
+  relativeThreshold: number
   rmsThreshold: number
+  speechPadding: number
   windowDuration: number
+}
+
+type SilenceDetectionOptions = SilenceDetectionSettings & {
+  idPrefix: string
 }
 
 type TimeRange = {
@@ -14,13 +21,52 @@ type TimeRange = {
   end: number
 }
 
-const defaultSilenceDetectionOptions: SilenceDetectionOptions = {
-  idPrefix: 'audio_silence_',
+type RmsFrame = TimeRange & {
+  rms: number
+}
+
+export const defaultSilenceDetectionSettings: SilenceDetectionSettings = {
+  adaptiveNormalization: true,
+  adaptiveWindowDuration: 1.2,
   mergeDuration: 0.2,
   minDuration: 0.8,
-  rmsThreshold: 0.012,
+  relativeThreshold: 0.16,
+  rmsThreshold: 0.008,
+  speechPadding: 0.12,
   windowDuration: 0.025,
 }
+
+const defaultSilenceDetectionOptions: SilenceDetectionOptions = {
+  ...defaultSilenceDetectionSettings,
+  idPrefix: 'audio_silence_',
+}
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(Number.isFinite(value) ? value : min, min), max)
+
+export const normalizeSilenceDetectionSettings = (
+  settings?: Partial<SilenceDetectionSettings>,
+): SilenceDetectionSettings => ({
+  adaptiveNormalization: Boolean(
+    settings?.adaptiveNormalization ?? defaultSilenceDetectionSettings.adaptiveNormalization,
+  ),
+  adaptiveWindowDuration: clamp(
+    settings?.adaptiveWindowDuration ?? defaultSilenceDetectionSettings.adaptiveWindowDuration,
+    0.2,
+    8,
+  ),
+  mergeDuration: clamp(settings?.mergeDuration ?? defaultSilenceDetectionSettings.mergeDuration, 0, 2),
+  minDuration: clamp(settings?.minDuration ?? defaultSilenceDetectionSettings.minDuration, 0.05, 10),
+  relativeThreshold: clamp(settings?.relativeThreshold ?? defaultSilenceDetectionSettings.relativeThreshold, 0.02, 1),
+  rmsThreshold: clamp(settings?.rmsThreshold ?? defaultSilenceDetectionSettings.rmsThreshold, 0.001, 0.2),
+  speechPadding: clamp(settings?.speechPadding ?? defaultSilenceDetectionSettings.speechPadding, 0, 2),
+  windowDuration: clamp(settings?.windowDuration ?? defaultSilenceDetectionSettings.windowDuration, 0.005, 0.25),
+})
+
+const normalizeSilenceDetectionOptions = (options?: Partial<SilenceDetectionOptions>): SilenceDetectionOptions => ({
+  ...normalizeSilenceDetectionSettings(options),
+  idPrefix: options?.idPrefix ?? defaultSilenceDetectionOptions.idPrefix,
+})
 
 const getFrameRms = (audioBuffer: AudioBuffer, frameStart: number, frameEnd: number) => {
   let maxRms = 0
@@ -51,32 +97,83 @@ const mergeCloseRanges = (ranges: TimeRange[], mergeDuration: number) =>
     return mergedRanges
   }, [])
 
-const extractAudibleRegions = (
+const padRanges = (ranges: TimeRange[], duration: number, padding: number) =>
+  ranges.map((range) => ({
+    start: Math.max(0, range.start - padding),
+    end: Math.min(duration, range.end + padding),
+  }))
+
+const getRmsFrames = (
   audioBuffer: AudioBuffer,
-  rmsThreshold: number,
   windowDuration: number,
-  mergeDuration: number,
-) => {
+): RmsFrame[] => {
   const sampleRate = audioBuffer.sampleRate
   const frameSize = Math.max(1, Math.round(sampleRate * windowDuration))
-  const regions: TimeRange[] = []
-  let audibleStart: number | undefined
+  const frames: RmsFrame[] = []
 
   for (let frameStart = 0; frameStart < audioBuffer.length; frameStart += frameSize) {
     const frameEnd = Math.min(audioBuffer.length, frameStart + frameSize)
-    const frameTime = frameStart / sampleRate
-    const isAudible = getFrameRms(audioBuffer, frameStart, frameEnd) > rmsThreshold
+    frames.push({
+      start: frameStart / sampleRate,
+      end: frameEnd / sampleRate,
+      rms: getFrameRms(audioBuffer, frameStart, frameEnd),
+    })
+  }
+
+  return frames
+}
+
+const getLocalPeakRms = (frames: RmsFrame[], index: number, radiusFrames: number) => {
+  let peak = 0
+  const start = Math.max(0, index - radiusFrames)
+  const end = Math.min(frames.length - 1, index + radiusFrames)
+
+  for (let frameIndex = start; frameIndex <= end; frameIndex += 1) {
+    peak = Math.max(peak, frames[frameIndex].rms)
+  }
+
+  return peak
+}
+
+const isAudibleFrame = (
+  frames: RmsFrame[],
+  index: number,
+  settings: SilenceDetectionSettings,
+) => {
+  const frame = frames[index]
+  if (frame.rms > settings.rmsThreshold) return true
+  if (!settings.adaptiveNormalization) return false
+
+  const radiusFrames = Math.max(1, Math.round(settings.adaptiveWindowDuration / settings.windowDuration / 2))
+  const localPeak = getLocalPeakRms(frames, index, radiusFrames)
+  if (localPeak <= 0) return false
+
+  const normalizedRms = frame.rms / localPeak
+  return frame.rms > settings.rmsThreshold * 0.2 && normalizedRms > settings.relativeThreshold
+}
+
+const extractAudibleRegions = (
+  audioBuffer: AudioBuffer,
+  settings: SilenceDetectionSettings,
+  mergeDuration: number,
+) => {
+  const frames = getRmsFrames(audioBuffer, settings.windowDuration)
+  const regions: TimeRange[] = []
+  let audibleStart: number | undefined
+
+  frames.forEach((frame, index) => {
+    const isAudible = isAudibleFrame(frames, index, settings)
 
     if (isAudible) {
-      audibleStart ??= frameTime
-      continue
+      audibleStart ??= frame.start
+      return
     }
 
     if (audibleStart !== undefined) {
-      regions.push({ start: audibleStart, end: frameTime })
+      regions.push({ start: audibleStart, end: frame.start })
       audibleStart = undefined
     }
-  }
+  })
 
   if (audibleStart !== undefined) {
     regions.push({ start: audibleStart, end: audioBuffer.duration })
@@ -121,17 +218,21 @@ export const detectSilenceCuts = (
   audioBuffer: AudioBuffer,
   options?: Partial<SilenceDetectionOptions>,
 ): EmptyZoneCut[] => {
+  const detectionSettings = normalizeSilenceDetectionOptions(options)
   const {
     idPrefix,
     mergeDuration,
     minDuration,
-    rmsThreshold,
-    windowDuration,
-  } = {
-    ...defaultSilenceDetectionOptions,
-    ...options,
-  }
-  const audibleRegions = extractAudibleRegions(audioBuffer, rmsThreshold, windowDuration, mergeDuration)
+    speechPadding,
+  } = detectionSettings
+  const audibleRegions = mergeCloseRanges(
+    padRanges(
+      extractAudibleRegions(audioBuffer, detectionSettings, mergeDuration),
+      audioBuffer.duration,
+      speechPadding,
+    ),
+    mergeDuration,
+  )
 
   return getSilenceCutsFromAudibleRegions(
     audibleRegions,

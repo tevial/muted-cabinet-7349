@@ -31,3 +31,11 @@ export type TranscriptionResult = {
   words: CaptionWord[]
   groups: CaptionGroup[]
 }
+
+export type AlignmentResult = {
+  language?: string
+  text: string
+  words: CaptionWord[]
+  unmatchedWords: string[]
+  diagnostics: Record<string, unknown>
+}

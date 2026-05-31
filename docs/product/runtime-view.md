@@ -9,7 +9,8 @@ sequenceDiagram
     participant A as Audio Fingerprint Service
     participant T as Transcription Client
     participant API as FastAPI
-    participant O as OpenAI
+    participant ST as Stable-ts
+    participant O as OpenAI fallback
     participant D as Caption Domain
     participant S as Storage Service
 
@@ -17,8 +18,13 @@ sequenceDiagram
     W->>A: createAudioFingerprint(file)
     W->>T: transcribeFile(file, language)
     T->>API: POST /api/transcribe
-    API->>O: audio.transcriptions.create
-    O-->>API: words + provider groups
+    API->>ST: model.transcribe with silence suppression/VAD
+    alt Stable-ts unavailable and OpenAI fallback configured
+        API->>O: audio.transcriptions.create
+        O-->>API: words + provider groups
+    else Stable-ts success
+        ST-->>API: words + provider segments
+    end
     API-->>T: TranscriptionResult
     T-->>W: TranscriptionResult
     W->>D: ingestTranscription(result, settings)

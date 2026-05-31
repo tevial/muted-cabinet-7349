@@ -11,6 +11,17 @@
 - Lifecycle/statuses: selected, fingerprinted, cached, transcribed.
 - Owned by: Web services/audio and caption workbench feature.
 
+### CapCutProjectSource
+
+- Purpose: Imported local CapCut draft used as the source timeline for editing.
+- Key fields: project path, main timeline id, rendered stem URL, duration.
+- Relationships: Owns one `SavedProject` editor snapshot scoped by project
+  identity.
+- Invariants: Browser storage never persists temporary stem object URLs; saved
+  skip zones are rebound to the fresh imported stem URL.
+- Lifecycle/statuses: scanned, imported, edited, patched.
+- Owned by: CapCut API/client services and caption workbench feature.
+
 ### CaptionWord
 
 - Purpose: Canonical timestamped word from transcription.
@@ -55,9 +66,13 @@
 ### SavedProject
 
 - Purpose: Browser-local editor state.
-- Key fields: source metadata, language, words, groups, grouping settings.
+- Key fields: source metadata, language, words, groups, grouping settings,
+  serialized skip-zone state.
 - Relationships: Restored on boot and autosaved after editor state changes.
-- Invariants: Does not contain server secrets or raw API credentials.
+- Invariants: Does not contain server secrets, raw API credentials, source
+  media bytes, or browser object URLs. Saved projects are stored both as the
+  latest project and under a stable source key for file or CapCut project
+  restore.
 - Lifecycle/statuses: restored, autosaved, manually saved, exported.
 - Owned by: storage service.
 

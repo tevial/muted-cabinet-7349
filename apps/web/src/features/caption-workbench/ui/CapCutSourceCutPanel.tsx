@@ -25,8 +25,8 @@ export function CapCutSourceCutPanel({
   if (!boundary) return null
 
   return (
-    <section className="capcut-source-cut-panel" aria-label="Selected CapCut source cut">
-      <div className="source-cut-header">
+    <section className="timeline-object-panel capcut-source-cut-panel" aria-label="Selected CapCut source cut">
+      <div className="timeline-object-header">
         <div>
           <span>Source cut</span>
           <strong>{formatSeconds(boundary.projectPosition)}</strong>
@@ -36,7 +36,7 @@ export function CapCutSourceCutPanel({
         </button>
       </div>
 
-      <dl className="source-cut-details">
+      <dl className="timeline-object-details">
         <div>
           <dt>Hidden source</dt>
           <dd>
@@ -53,7 +53,7 @@ export function CapCutSourceCutPanel({
         </div>
       </dl>
 
-      <div className="source-cut-actions">
+      <div className="timeline-object-actions">
         <button className="ghost-button" type="button" disabled={isLoadingPreview} onClick={onLoadPreview}>
           {isLoadingPreview ? <Loader2 size={16} /> : <ExternalLink size={16} />}
           {isLoadingPreview ? 'Rendering preview' : 'Preview hidden range'}

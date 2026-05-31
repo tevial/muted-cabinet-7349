@@ -9,8 +9,9 @@ Current services:
 
 - `audio/audioFingerprint.ts` - source media cache fingerprint.
 - `api/apiConfig.ts` - shared local API base URL.
+- `alignment/alignmentClient.ts` - local API MFA forced-alignment request.
 - `capcut/capcutClient.ts` - local API CapCut project scan, inspect, import,
-  source-preview, dry-run, and patch requests.
-- `storage/projectRepository.ts` - local project, serialized skip-zone state,
-  and transcription cache.
+  stem-file download, source-preview, dry-run, and patch requests.
+- `storage/projectRepository.ts` - source-keyed local projects, serialized
+  skip-zone state, and transcription cache.
 - `transcription/transcriptionClient.ts` - local API transcription request.

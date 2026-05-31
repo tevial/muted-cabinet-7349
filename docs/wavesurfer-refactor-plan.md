@@ -648,6 +648,34 @@ The remaining custom logic is intentionally domain/control code:
   selection. The range can be converted into a skip zone or sent to the local
   API for selected-segment transcription.
 
+## 2026-05-31 Synchronization Audit
+
+After re-checking the official WaveSurfer v7 docs and the installed
+`wavesurfer.js@7.12.7` package, the timeline model now follows these stricter
+rules:
+
+- Use WaveSurfer's time-aware `scroll` event payload
+  (`visibleStartTime`, `visibleEndTime`) as the synchronization contract between
+  the clean waveform lane and caption lane. Raw `scrollLeft` values are not a
+  stable cross-instance contract once lanes have different DOM wrappers or are
+  redrawn at a new zoom level.
+- Preserve the viewport center when the zoom slider changes. The Zoom plugin
+  anchors wheel zoom around the pointer internally, while slider zoom has no
+  pointer anchor; keeping the center time stable prevents caption regions from
+  appearing to jump left or right.
+- Defer cross-lane zoom synchronization to `requestAnimationFrame`. The Zoom
+  plugin emits the WaveSurfer `zoom` event before its final scroll adjustment is
+  fully observable by the paired lane, so immediate synchronization can copy a
+  transient position.
+- Derive rendered pixels-per-second from `wrapper.scrollWidth / duration`
+  whenever converting between time and scroll pixels. This matches the rendered
+  WaveSurfer surface better than assuming the configured `minPxPerSec` exactly
+  equals current DOM scale.
+- When `normalize` is enabled, compute one decoded-audio `maxPeak` and pass it
+  into both WaveSurfer lanes. Without a fixed peak, WaveSurfer can normalize
+  each rendered canvas slice independently during redraw, which makes the same
+  waveform look taller or shorter while zooming.
+
 ## Follow-Up Checks
 
 The next product check should use real media and confirm:

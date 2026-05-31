@@ -24,7 +24,8 @@ patterns.
 - Public API: Typed view props for toolbar, settings popover content, playback,
   undo/redo actions, kept-chunk transcription, manual and automatic skip-zone
   controls, CapCut cut-manifest export, WaveSurfer timeline refs,
-  detected-silence tuning controls, zoom control, and right-rail editor regions.
+  draft-only detected-silence threshold/normalization/tuning controls, zoom
+  control, and right-rail editor regions.
 - Used by: `CaptionWorkbench`.
 - Use when: Rendering the workbench layout.
 - Do not use for: Transcription/cache/grouping/playback state transitions.
@@ -78,6 +79,20 @@ patterns.
   imported CapCut project.
 - Do not use for: Timeline-map mutation, draft writes, or ffmpeg/API calls.
 - Related: [CapCut Cut Export Plan](../capcut-cut-export-plan.md).
+
+### CaptionGapPanel
+
+- Layer: feature view
+- Location:
+  `apps/web/src/features/caption-workbench/ui/CaptionGapPanel.tsx`
+- Purpose: Render the selected subtitle-only gap between two caption groups and
+  offer an action to relink captions across that gap.
+- Public API: Selected `CaptionGap`, close callback, relink callback.
+- Used by: Caption workbench screen.
+- Use when: The workbench needs to explain that a timeline range keeps media
+  but hides caption display.
+- Do not use for: Skip-zone deletion, media cuts, or group timing mutation.
+- Related: [Caption Domain](modules.md#caption-domain).
 
 ### TopBar
 

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import shutil
-import subprocess
+import os
 import tempfile
+import threading
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from openai import OpenAI
+
+from .audio_processing import AudioProcessingError, create_mono_wav_segment, has_ffmpeg, probe_duration
 
 
 TRANSCRIPTION_MODEL = "whisper-1"
@@ -49,8 +51,170 @@ class AudioChunk:
     accept_end: float
 
 
+class TranscriptionBackend(Protocol):
+    name: str
+    uses_provider_chunking: bool
+
+    def transcribe_bytes(
+        self,
+        filename: str,
+        audio_bytes: bytes,
+        language: str | None,
+        duration: float | None,
+    ) -> TranscriptionResult:
+        pass
+
+
+@dataclass(frozen=True)
+class StableTsOptions:
+    model: str = "base"
+    device: str | None = None
+    download_root: str | None = None
+    dynamic_quantization: bool = False
+    vad: bool = True
+    vad_threshold: float = 0.35
+    min_word_duration: float | None = 0.1
+    min_silence_duration: float | None = None
+    nonspeech_error: float = 0.1
+    nonspeech_skip: float | None = 5.0
+    only_voice_freq: bool = False
+    suppress_ts_tokens: bool = False
+    condition_on_previous_text: bool = False
+    refine: bool = False
+
+
+class OpenAiTranscriptionBackend:
+    name = "openai"
+    uses_provider_chunking = False
+
+    def __init__(self, client: OpenAI):
+        self._client = client
+
+    def transcribe_bytes(
+        self,
+        filename: str,
+        audio_bytes: bytes,
+        language: str | None,
+        duration: float | None,
+    ) -> TranscriptionResult:
+        return _transcribe_bytes_with_openai(self._client, filename, audio_bytes, language, duration)
+
+
+class StableTsTranscriptionBackend:
+    name = "stable-ts"
+    uses_provider_chunking = True
+
+    _model_cache: dict[tuple[Any, ...], Any] = {}
+    _model_lock = threading.Lock()
+    _model_run_lock = threading.Lock()
+
+    def __init__(self, options: StableTsOptions):
+        self._options = options
+
+    def transcribe_bytes(
+        self,
+        filename: str,
+        audio_bytes: bytes,
+        language: str | None,
+        duration: float | None,
+    ) -> TranscriptionResult:
+        safe_filename = Path(filename).name or "upload.wav"
+        with tempfile.TemporaryDirectory(prefix="capcut-caption-stable-ts-") as temp_dir_name:
+            source_path = Path(temp_dir_name) / safe_filename
+            source_path.write_bytes(audio_bytes)
+
+            model = self._model()
+            try:
+                with self._model_run_lock:
+                    result = model.transcribe(
+                        str(source_path),
+                        language=language or None,
+                        verbose=None,
+                        word_timestamps=True,
+                        regroup=False,
+                        suppress_silence=True,
+                        suppress_word_ts=True,
+                        vad=self._options.vad,
+                        vad_threshold=self._options.vad_threshold,
+                        min_word_dur=self._options.min_word_duration,
+                        min_silence_dur=self._options.min_silence_duration,
+                        nonspeech_error=self._options.nonspeech_error,
+                        nonspeech_skip=self._options.nonspeech_skip,
+                        only_voice_freq=self._options.only_voice_freq,
+                        suppress_ts_tokens=self._options.suppress_ts_tokens,
+                        condition_on_previous_text=self._options.condition_on_previous_text,
+                    )
+                    if self._options.refine:
+                        result = model.refine(str(source_path), result, verbose=None)
+            except Exception as error:
+                raise TranscriptionError(f"stable-ts transcription failed: {error}") from error
+
+            words = _sort_and_deduplicate_words(_extract_stable_ts_words(result))
+            return TranscriptionResult(
+                language=_get_string_attr(result, "language") or language,
+                duration=duration,
+                text=_get_string_attr(result, "text") or " ".join(word.text for word in words),
+                words=words,
+            )
+
+    def _model(self) -> Any:
+        cache_key = (
+            self._options.model,
+            self._options.device,
+            self._options.download_root,
+            self._options.dynamic_quantization,
+        )
+        with self._model_lock:
+            cached = self._model_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+            try:
+                import stable_whisper
+            except ImportError as error:
+                raise TranscriptionError(
+                    "stable-ts is not installed. Install apps/api/requirements.txt or set TRANSCRIPTION_PROVIDER=openai."
+                ) from error
+
+            try:
+                _ensure_ssl_cert_file()
+                model = stable_whisper.load_model(
+                    self._options.model,
+                    device=self._options.device or None,
+                    download_root=self._options.download_root or None,
+                    dq=self._options.dynamic_quantization,
+                )
+            except Exception as error:
+                raise TranscriptionError(f"Could not load stable-ts model: {error}") from error
+            self._model_cache[cache_key] = model
+            return model
+
+
+class FallbackTranscriptionBackend:
+    name = "auto"
+    uses_provider_chunking = False
+
+    def __init__(self, primary: TranscriptionBackend, fallback: TranscriptionBackend | None):
+        self._primary = primary
+        self._fallback = fallback
+
+    def transcribe_bytes(
+        self,
+        filename: str,
+        audio_bytes: bytes,
+        language: str | None,
+        duration: float | None,
+    ) -> TranscriptionResult:
+        try:
+            return self._primary.transcribe_bytes(filename, audio_bytes, language, duration)
+        except TranscriptionError:
+            if self._fallback is None:
+                raise
+            return self._fallback.transcribe_bytes(filename, audio_bytes, language, duration)
+
+
 def transcribe_audio(
-    client: OpenAI,
+    backend: TranscriptionBackend,
     filename: str,
     audio_bytes: bytes,
     language: str | None,
@@ -62,16 +226,21 @@ def transcribe_audio(
         source_path = temp_dir / safe_filename
         source_path.write_bytes(audio_bytes)
 
-        duration = _probe_duration(source_path)
-        if duration is None or duration <= CHUNKING_THRESHOLD_SECONDS or not _has_ffmpeg():
-            return _transcribe_bytes(client, safe_filename, audio_bytes, language, duration=duration)
+        duration = probe_duration(source_path)
+        if (
+            backend.uses_provider_chunking
+            or duration is None
+            or duration <= CHUNKING_THRESHOLD_SECONDS
+            or not has_ffmpeg()
+        ):
+            return backend.transcribe_bytes(safe_filename, audio_bytes, language, duration=duration)
 
         chunks = _create_chunks(source_path, safe_filename, duration, temp_dir)
-        return _transcribe_chunks(client, chunks, language, duration)
+        return _transcribe_chunks(backend, chunks, language, duration)
 
 
 def transcribe_audio_segment(
-    client: OpenAI,
+    backend: TranscriptionBackend,
     filename: str,
     audio_bytes: bytes,
     language: str | None,
@@ -83,7 +252,7 @@ def transcribe_audio_segment(
     if safe_end - safe_start <= 0:
         raise TranscriptionError("Selected segment is empty.")
 
-    if not _has_ffmpeg():
+    if not has_ffmpeg():
         raise TranscriptionError("ffmpeg is required to transcribe a selected segment.")
 
     safe_filename = Path(filename).name or "upload"
@@ -92,7 +261,7 @@ def transcribe_audio_segment(
         source_path = temp_dir / safe_filename
         source_path.write_bytes(audio_bytes)
 
-        duration = _probe_duration(source_path)
+        duration = probe_duration(source_path)
         if duration is not None:
             safe_start = min(safe_start, duration)
             safe_end = min(safe_end, duration)
@@ -101,12 +270,11 @@ def transcribe_audio_segment(
 
         segment_path = temp_dir / f"{Path(safe_filename).stem or 'upload'}-selection.wav"
         _create_segment(source_path, segment_path, safe_start, safe_end - safe_start)
-        segment_result = _transcribe_bytes(
-            client,
+        segment_result = backend.transcribe_bytes(
             segment_path.name,
             segment_path.read_bytes(),
             language,
-            duration=safe_end - safe_start,
+            safe_end - safe_start,
         )
 
         return TranscriptionResult(
@@ -124,46 +292,20 @@ def transcribe_audio_segment(
         )
 
 
-def _has_ffmpeg() -> bool:
-    return bool(shutil.which("ffmpeg"))
-
-
-def _probe_duration(path: Path) -> float | None:
-    ffprobe = shutil.which("ffprobe")
-    if not ffprobe:
-        return None
+def _ensure_ssl_cert_file() -> None:
+    if os.environ.get("SSL_CERT_FILE"):
+        return
 
     try:
-        completed = subprocess.run(
-            [
-                ffprobe,
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                str(path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
+        import certifi
+    except ImportError:
+        return
 
-    try:
-        duration = float(completed.stdout.strip())
-    except ValueError:
-        return None
-
-    return duration if duration > 0 else None
-
+    os.environ["SSL_CERT_FILE"] = certifi.where()
 
 def _create_chunks(source_path: Path, filename: str, duration: float, temp_dir: Path) -> list[AudioChunk]:
     chunks: list[AudioChunk] = []
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
+    if not has_ffmpeg():
         return chunks
 
     logical_start = 0.0
@@ -177,33 +319,8 @@ def _create_chunks(source_path: Path, filename: str, duration: float, temp_dir: 
         output_path = temp_dir / f"{Path(filename).stem or 'upload'}-chunk-{index:04d}.wav"
 
         try:
-            subprocess.run(
-                [
-                    ffmpeg,
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-y",
-                    "-ss",
-                    f"{window_start:.3f}",
-                    "-t",
-                    f"{window_duration:.3f}",
-                    "-i",
-                    str(source_path),
-                    "-vn",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "16000",
-                    "-c:a",
-                    "pcm_s16le",
-                    str(output_path),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as error:
+            create_mono_wav_segment(source_path, output_path, window_start, window_duration)
+        except AudioProcessingError as error:
             raise TranscriptionError(f"Could not prepare audio chunk {index}: {error}") from error
 
         chunks.append(
@@ -222,43 +339,14 @@ def _create_chunks(source_path: Path, filename: str, duration: float, temp_dir: 
 
 
 def _create_segment(source_path: Path, output_path: Path, start: float, duration: float) -> None:
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise TranscriptionError("ffmpeg is required to prepare the selected segment.")
-
     try:
-        subprocess.run(
-            [
-                ffmpeg,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-ss",
-                f"{start:.3f}",
-                "-t",
-                f"{duration:.3f}",
-                "-i",
-                str(source_path),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-c:a",
-                "pcm_s16le",
-                str(output_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
+        create_mono_wav_segment(source_path, output_path, start, duration)
+    except AudioProcessingError as error:
         raise TranscriptionError(f"Could not prepare selected audio segment: {error}") from error
 
 
 def _transcribe_chunks(
-    client: OpenAI,
+    backend: TranscriptionBackend,
     chunks: list[AudioChunk],
     language: str | None,
     duration: float,
@@ -270,10 +358,10 @@ def _transcribe_chunks(
     words: list[TranscribedWord] = []
 
     for chunk in chunks:
-        transcript = _request_transcription(client, chunk.name, chunk.path.read_bytes(), language)
-        language_result = language_result or _get_string_attr(transcript, "language") or language
+        transcript = backend.transcribe_bytes(chunk.name, chunk.path.read_bytes(), language, duration=None)
+        language_result = language_result or transcript.language or language
 
-        for word in _extract_words(transcript):
+        for word in transcript.words:
             adjusted = TranscribedWord(
                 text=word.text,
                 start=word.start + chunk.offset,
@@ -292,7 +380,7 @@ def _transcribe_chunks(
     )
 
 
-def _transcribe_bytes(
+def _transcribe_bytes_with_openai(
     client: OpenAI,
     filename: str,
     audio_bytes: bytes,
@@ -326,6 +414,29 @@ def _request_transcription(client: OpenAI, filename: str, audio_bytes: bytes, la
         raise TranscriptionError(str(error)) from error
     finally:
         audio.close()
+
+
+def _extract_stable_ts_words(result: Any) -> list[TranscribedWord]:
+    try:
+        result_words = result.all_words()
+    except AttributeError:
+        result_words = []
+
+    words: list[TranscribedWord] = []
+    for item in result_words:
+        text = str(getattr(item, "word", "") or getattr(item, "text", "")).strip()
+        if not text:
+            continue
+
+        start = _get_float_attr(item, "start")
+        end = _get_float_attr(item, "end")
+        if start is None or end is None or end <= start:
+            continue
+
+        confidence = _get_float_attr(item, "probability") or _get_float_attr(item, "prob")
+        words.append(TranscribedWord(text=text, start=start, end=end, confidence=confidence))
+
+    return words
 
 
 def _extract_words(transcript: Any) -> list[TranscribedWord]:

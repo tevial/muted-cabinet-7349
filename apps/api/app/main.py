@@ -33,7 +33,17 @@ from .capcut_timeline import (
     render_capcut_source_preview,
 )
 from .captioning import CaptionGroup, GroupingSettings, Word, export_srt, group_words
-from .transcription import TranscriptionError, transcribe_audio, transcribe_audio_segment
+from .alignment import AlignmentError, MfaAlignmentBackend, MfaOptions, align_audio_segment
+from .transcription import (
+    FallbackTranscriptionBackend,
+    OpenAiTranscriptionBackend,
+    StableTsOptions,
+    StableTsTranscriptionBackend,
+    TranscriptionBackend,
+    TranscriptionError,
+    transcribe_audio,
+    transcribe_audio_segment,
+)
 
 
 app = FastAPI(title="CapCut Caption API", version="0.1.0")
@@ -49,8 +59,33 @@ app.add_middleware(
 
 class Settings(BaseSettings):
     openai_api_key: str = ""
+    transcription_provider: str = "auto"
     max_segment_transcription_ranges: int = Field(default=120, ge=1, le=500)
     max_parallel_segment_transcriptions: int = Field(default=8, ge=1, le=32)
+    stable_ts_model: str = "base"
+    stable_ts_device: str | None = None
+    stable_ts_download_root: str | None = None
+    stable_ts_dynamic_quantization: bool = False
+    stable_ts_vad: bool = True
+    stable_ts_vad_threshold: float = Field(default=0.35, ge=0, le=1)
+    stable_ts_min_word_duration: float | None = Field(default=0.1, ge=0)
+    stable_ts_min_silence_duration: float | None = Field(default=None, ge=0)
+    stable_ts_nonspeech_error: float = Field(default=0.1, ge=0)
+    stable_ts_nonspeech_skip: float | None = Field(default=5.0, ge=0)
+    stable_ts_only_voice_freq: bool = False
+    stable_ts_suppress_ts_tokens: bool = False
+    stable_ts_condition_on_previous_text: bool = False
+    stable_ts_refine: bool = False
+    mfa_command: str = "mfa"
+    mfa_dictionary: str | None = None
+    mfa_acoustic_model: str | None = None
+    mfa_g2p_model: str | None = None
+    mfa_num_jobs: int = Field(default=1, ge=1, le=16)
+    mfa_timeout_seconds: int = Field(default=180, ge=10, le=3600)
+    mfa_single_speaker: bool = True
+    mfa_clean: bool = True
+    mfa_textgrid_cleanup: bool = True
+    mfa_fine_tune: bool = False
     capcut_local_agent_enabled: bool = True
     capcut_projects_root: str = Field(default_factory=get_default_projects_root)
     capcut_project_scan_limit: int = Field(default=120, ge=1, le=500)
@@ -103,6 +138,14 @@ class TranscribeResponse(BaseModel):
     text: str
     words: list[WordPayload]
     groups: list[GroupPayload]
+
+
+class AlignmentResponse(BaseModel):
+    language: str | None = None
+    text: str
+    words: list[WordPayload]
+    unmatched_words: list[str] = Field(alias="unmatchedWords")
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SegmentRangePayload(BaseModel):
@@ -250,6 +293,73 @@ def _capcut_error(error: CapCutDraftError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(error))
 
 
+def _stable_ts_options() -> StableTsOptions:
+    return StableTsOptions(
+        model=settings.stable_ts_model,
+        device=settings.stable_ts_device,
+        download_root=settings.stable_ts_download_root,
+        dynamic_quantization=settings.stable_ts_dynamic_quantization,
+        vad=settings.stable_ts_vad,
+        vad_threshold=settings.stable_ts_vad_threshold,
+        min_word_duration=settings.stable_ts_min_word_duration,
+        min_silence_duration=settings.stable_ts_min_silence_duration,
+        nonspeech_error=settings.stable_ts_nonspeech_error,
+        nonspeech_skip=settings.stable_ts_nonspeech_skip,
+        only_voice_freq=settings.stable_ts_only_voice_freq,
+        suppress_ts_tokens=settings.stable_ts_suppress_ts_tokens,
+        condition_on_previous_text=settings.stable_ts_condition_on_previous_text,
+        refine=settings.stable_ts_refine,
+    )
+
+
+def _openai_transcription_backend(required: bool) -> OpenAiTranscriptionBackend | None:
+    if not settings.openai_api_key:
+        if required:
+            raise HTTPException(
+                status_code=400,
+                detail="OPENAI_API_KEY is missing. Add it to apps/api/.env and restart the API server.",
+            )
+        return None
+    return OpenAiTranscriptionBackend(OpenAI(api_key=settings.openai_api_key))
+
+
+def _transcription_backend() -> TranscriptionBackend:
+    provider = settings.transcription_provider.strip().lower().replace("_", "-")
+    if provider == "openai":
+        openai_backend = _openai_transcription_backend(required=True)
+        if openai_backend is None:
+            raise HTTPException(status_code=400, detail="OPENAI_API_KEY is missing.")
+        return openai_backend
+    if provider in {"stable", "stable-ts"}:
+        return StableTsTranscriptionBackend(_stable_ts_options())
+    if provider == "auto":
+        return FallbackTranscriptionBackend(
+            StableTsTranscriptionBackend(_stable_ts_options()),
+            _openai_transcription_backend(required=False),
+        )
+    raise HTTPException(
+        status_code=400,
+        detail="TRANSCRIPTION_PROVIDER must be one of: auto, stable-ts, openai.",
+    )
+
+
+def _mfa_alignment_backend() -> MfaAlignmentBackend:
+    return MfaAlignmentBackend(
+        MfaOptions(
+            command=settings.mfa_command,
+            dictionary=settings.mfa_dictionary,
+            acoustic_model=settings.mfa_acoustic_model,
+            g2p_model=settings.mfa_g2p_model,
+            num_jobs=settings.mfa_num_jobs,
+            timeout_seconds=settings.mfa_timeout_seconds,
+            single_speaker=settings.mfa_single_speaker,
+            clean=settings.mfa_clean,
+            textgrid_cleanup=settings.mfa_textgrid_cleanup,
+            fine_tune=settings.mfa_fine_tune,
+        )
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -387,17 +497,11 @@ async def transcribe(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing upload filename.")
 
-    if not settings.openai_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="OPENAI_API_KEY is missing. Add it to apps/api/.env and restart the API server.",
-        )
-
-    client = OpenAI(api_key=settings.openai_api_key)
+    backend = _transcription_backend()
     audio_bytes = await file.read()
 
     try:
-        transcript = await asyncio.to_thread(transcribe_audio, client, file.filename, audio_bytes, language or None)
+        transcript = await asyncio.to_thread(transcribe_audio, backend, file.filename, audio_bytes, language or None)
     except TranscriptionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
@@ -417,19 +521,13 @@ async def transcribe_segment(
     if end <= start:
         raise HTTPException(status_code=400, detail="Segment end must be after start.")
 
-    if not settings.openai_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="OPENAI_API_KEY is missing. Add it to apps/api/.env and restart the API server.",
-        )
-
-    client = OpenAI(api_key=settings.openai_api_key)
+    backend = _transcription_backend()
     audio_bytes = await file.read()
 
     try:
         transcript = await asyncio.to_thread(
             transcribe_audio_segment,
-            client,
+            backend,
             file.filename,
             audio_bytes,
             language or None,
@@ -451,14 +549,8 @@ async def transcribe_segments(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing upload filename.")
 
-    if not settings.openai_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="OPENAI_API_KEY is missing. Add it to apps/api/.env and restart the API server.",
-        )
-
     segment_ranges = _parse_segment_ranges(ranges)
-    client = OpenAI(api_key=settings.openai_api_key)
+    backend = _transcription_backend()
     audio_bytes = await file.read()
     semaphore = asyncio.Semaphore(settings.max_parallel_segment_transcriptions)
 
@@ -466,7 +558,7 @@ async def transcribe_segments(
         async with semaphore:
             transcript = await asyncio.to_thread(
                 transcribe_audio_segment,
-                client,
+                backend,
                 file.filename,
                 audio_bytes,
                 language or None,
@@ -501,4 +593,41 @@ async def transcribe_segments(
         text=" ".join(word.text for word in words),
         words=words,
         groups=_to_group_payloads(grouped),
+    )
+
+
+@app.post("/api/align/segment", response_model=AlignmentResponse)
+async def align_segment(
+    file: Annotated[UploadFile, File()],
+    start: Annotated[float, Form(ge=0)],
+    end: Annotated[float, Form(gt=0)],
+    text: Annotated[str, Form(min_length=1)],
+    language: Annotated[str | None, Form()] = None,
+) -> AlignmentResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing upload filename.")
+    if end <= start:
+        raise HTTPException(status_code=400, detail="Segment end must be after start.")
+
+    audio_bytes = await file.read()
+    try:
+        result = await asyncio.to_thread(
+            align_audio_segment,
+            _mfa_alignment_backend(),
+            file.filename,
+            audio_bytes,
+            text,
+            language or None,
+            start,
+            end,
+        )
+    except AlignmentError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    return AlignmentResponse(
+        language=result.language,
+        text=result.text,
+        words=_to_word_payloads(result.words, "w_align"),
+        unmatchedWords=result.unmatched_words,
+        diagnostics=result.diagnostics,
     )

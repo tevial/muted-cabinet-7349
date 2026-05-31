@@ -12,10 +12,13 @@ import type {
   CapCutPatchSummary,
   CapCutProjectSummary,
 } from '../../../services/capcut/capcutClient'
+import type { CaptionGap } from '../../../domain/captions'
 import type { CapCutProjectImport, CapCutSourceCutBoundary, CapCutSourcePreview } from '../../../contracts/capcut'
+import { CaptionGapPanel } from './CaptionGapPanel'
 import { CapCutProjectImportDialog } from './CapCutProjectImportDialog'
 import { CapCutProjectPatchDialog } from './CapCutProjectPatchDialog'
 import { CapCutSourceCutPanel } from './CapCutSourceCutPanel'
+import type { SilenceDetectionSettings } from '../model/silenceDetection'
 
 type CaptionWorkbenchScreenProps = {
   capCutAgent?: CapCutLocalAgentStatus
@@ -27,12 +30,14 @@ type CaptionWorkbenchScreenProps = {
   capCutSourceCutBoundary?: CapCutSourceCutBoundary
   capCutSourcePreview?: CapCutSourcePreview
   capCutSourcePreviewError?: string
+  captionGap?: CaptionGap
   groups: CaptionGroup[]
   totalGroups: number
   selectedGroupId?: string
   selectedSkipRegionId?: string
   isPlaying: boolean
   isTranscribing: boolean
+  isAligningCaptions: boolean
   isCapCutPatchBusy: boolean
   isCapCutPatchOpen: boolean
   isCapCutImportBusy: boolean
@@ -42,7 +47,12 @@ type CaptionWorkbenchScreenProps = {
   canRedo: boolean
   canExportCutManifest: boolean
   canSaveProject: boolean
+  canAlignCaptions: boolean
+  canAlignSelectedCaption: boolean
   canTranscribeKeptChunks: boolean
+  alignmentProgressLabel?: string
+  aligningGroupIds: string[]
+  dirtyAlignmentCount: number
   hasCachedTranscript: boolean
   canUndo: boolean
   detectedSilenceAdjustment: number
@@ -61,6 +71,12 @@ type CaptionWorkbenchScreenProps = {
     max: number
     step: number
   }
+  silenceDetectionSettingConfig: {
+    minDuration: { min: number; max: number; step: number }
+    rmsThreshold: { min: number; max: number; step: number }
+    speechPadding: { min: number; max: number; step: number }
+  }
+  silenceDetectionSettings: SilenceDetectionSettings
   waveformContainerRef: RefObject<HTMLDivElement | null>
   zoomLabel: string
   zoomLevel: number
@@ -82,6 +98,8 @@ type CaptionWorkbenchScreenProps = {
   onCapCutImportRun: () => void
   onCapCutSourceCutClose: () => void
   onCapCutSourcePreviewLoad: () => void
+  onCaptionGapClose: () => void
+  onCaptionGapLink: () => void
   onCapCutPatchClose: () => void
   onCapCutPatchDryRun: () => void
   onCapCutPatchOpen: () => void
@@ -94,7 +112,11 @@ type CaptionWorkbenchScreenProps = {
   onDetectedSilenceAdjustmentChange: (adjustment: number) => void
   onDetectSilentSkipRegions: () => void
   onDeleteSelectedSkipRegion: () => void
+  onSilenceDetectionSettingsChange: (settings: Partial<SilenceDetectionSettings>) => void
   onTranscribeKeptChunks: () => void
+  onAlignDirtyGroups: () => void
+  onAlignSelectedGroup: () => void
+  onAlignVisibleGroups: () => void
   onTimelineZoomChange: (pixelsPerSecond: number) => void
   onEditorSelect: (groupId: string) => void
   onGroupTextChange: (groupId: string, text: string) => void
@@ -118,12 +140,14 @@ export function CaptionWorkbenchScreen({
   capCutSourceCutBoundary,
   capCutSourcePreview,
   capCutSourcePreviewError,
+  captionGap,
   groups,
   totalGroups,
   selectedGroupId,
   selectedSkipRegionId,
   isPlaying,
   isTranscribing,
+  isAligningCaptions,
   isCapCutPatchBusy,
   isCapCutPatchOpen,
   isCapCutImportBusy,
@@ -133,7 +157,12 @@ export function CaptionWorkbenchScreen({
   canRedo,
   canExportCutManifest,
   canSaveProject,
+  canAlignCaptions,
+  canAlignSelectedCaption,
   canTranscribeKeptChunks,
+  alignmentProgressLabel,
+  aligningGroupIds,
+  dirtyAlignmentCount,
   hasCachedTranscript,
   canUndo,
   detectedSilenceAdjustment,
@@ -144,6 +173,8 @@ export function CaptionWorkbenchScreen({
   timelineContainerRef,
   timelineZoomConfig,
   silenceAdjustmentConfig,
+  silenceDetectionSettingConfig,
+  silenceDetectionSettings,
   waveformContainerRef,
   zoomLabel,
   zoomLevel,
@@ -165,6 +196,8 @@ export function CaptionWorkbenchScreen({
   onCapCutImportRun,
   onCapCutSourceCutClose,
   onCapCutSourcePreviewLoad,
+  onCaptionGapClose,
+  onCaptionGapLink,
   onCapCutPatchClose,
   onCapCutPatchDryRun,
   onCapCutPatchOpen,
@@ -177,7 +210,11 @@ export function CaptionWorkbenchScreen({
   onDetectedSilenceAdjustmentChange,
   onDetectSilentSkipRegions,
   onDeleteSelectedSkipRegion,
+  onSilenceDetectionSettingsChange,
   onTranscribeKeptChunks,
+  onAlignDirtyGroups,
+  onAlignSelectedGroup,
+  onAlignVisibleGroups,
   onTimelineZoomChange,
   onEditorSelect,
   onGroupTextChange,
@@ -197,7 +234,7 @@ export function CaptionWorkbenchScreen({
         canExportCutManifest={canExportCutManifest}
         canRedo={canRedo}
         canSaveProject={canSaveProject}
-        canTranscribe={canTranscribeKeptChunks || Boolean(audioUrl && !capCutProjectImport)}
+        canTranscribe={Boolean(audioUrl && !capCutProjectImport)}
         canUndo={canUndo}
         hasCachedTranscript={hasCachedTranscript}
         isTranscribing={isTranscribing}
@@ -292,6 +329,52 @@ export function CaptionWorkbenchScreen({
               </button>
               {hasDetectedSilenceDraft ? (
                 <>
+                  <label className="silence-setting-control" title="RMS floor for silence detection">
+                    <span>RMS</span>
+                    <input
+                      type="number"
+                      min={silenceDetectionSettingConfig.rmsThreshold.min}
+                      max={silenceDetectionSettingConfig.rmsThreshold.max}
+                      step={silenceDetectionSettingConfig.rmsThreshold.step}
+                      value={silenceDetectionSettings.rmsThreshold}
+                      disabled={!audioUrl || !isTimelineReady}
+                      onChange={(event) => onSilenceDetectionSettingsChange({ rmsThreshold: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label className="silence-setting-control" title="Minimum final skip-zone duration">
+                    <span>Min gap</span>
+                    <input
+                      type="number"
+                      min={silenceDetectionSettingConfig.minDuration.min}
+                      max={silenceDetectionSettingConfig.minDuration.max}
+                      step={silenceDetectionSettingConfig.minDuration.step}
+                      value={silenceDetectionSettings.minDuration}
+                      disabled={!audioUrl || !isTimelineReady}
+                      onChange={(event) => onSilenceDetectionSettingsChange({ minDuration: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label className="silence-setting-control" title="Speech guard added around detected audible regions">
+                    <span>Guard</span>
+                    <input
+                      type="number"
+                      min={silenceDetectionSettingConfig.speechPadding.min}
+                      max={silenceDetectionSettingConfig.speechPadding.max}
+                      step={silenceDetectionSettingConfig.speechPadding.step}
+                      value={silenceDetectionSettings.speechPadding}
+                      disabled={!audioUrl || !isTimelineReady}
+                      onChange={(event) => onSilenceDetectionSettingsChange({ speechPadding: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label className="silence-normalize-control" title="Use local loudness normalization for uneven recordings">
+                    <input
+                      type="checkbox"
+                      checked={silenceDetectionSettings.adaptiveNormalization}
+                      disabled={!audioUrl || !isTimelineReady}
+                      onChange={(event) =>
+                        onSilenceDetectionSettingsChange({ adaptiveNormalization: event.target.checked })}
+                    />
+                    <span>Normalize</span>
+                  </label>
                   <label className="silence-tune-control" title="Adjust detected silent zone boundaries">
                     <input
                       type="range"
@@ -320,6 +403,39 @@ export function CaptionWorkbenchScreen({
                 onClick={onDeleteSelectedSkipRegion}
               >
                 <Trash2 size={16} />
+              </button>
+            </div>
+
+            <div className="alignment-controls" aria-label="Caption alignment actions">
+              <button
+                className="ghost-button compact-action"
+                type="button"
+                title="Run MFA alignment for the selected caption group"
+                disabled={!canAlignSelectedCaption || isAligningCaptions}
+                onClick={onAlignSelectedGroup}
+              >
+                <ScanText size={16} />
+                {alignmentProgressLabel ?? 'Align selected'}
+              </button>
+              <button
+                className="ghost-button compact-action"
+                type="button"
+                title="Run MFA alignment for edited caption groups"
+                disabled={!dirtyAlignmentCount || !canAlignCaptions || isAligningCaptions}
+                onClick={onAlignDirtyGroups}
+              >
+                <WandSparkles size={16} />
+                Edited {dirtyAlignmentCount}
+              </button>
+              <button
+                className="ghost-button compact-action"
+                type="button"
+                title="Run MFA alignment for all visible caption groups"
+                disabled={!canAlignCaptions || isAligningCaptions}
+                onClick={onAlignVisibleGroups}
+              >
+                <Check size={16} />
+                Align all
               </button>
             </div>
 
@@ -356,6 +472,11 @@ export function CaptionWorkbenchScreen({
               onClose={onCapCutSourceCutClose}
               onLoadPreview={onCapCutSourcePreviewLoad}
             />
+            <CaptionGapPanel
+              gap={captionGap}
+              onClose={onCaptionGapClose}
+              onLink={onCaptionGapLink}
+            />
             {capCutProjectImport ? (
               <CapCutMultitrackPreview stems={capCutProjectImport.stems} zoomLevel={zoomLevel} />
             ) : null}
@@ -370,6 +491,7 @@ export function CaptionWorkbenchScreen({
 
         <div className="right-rail">
           <CaptionEditor
+            aligningGroupIds={aligningGroupIds}
             groups={groups}
             selectedGroupId={selectedGroupId}
             totalGroups={totalGroups}

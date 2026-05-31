@@ -7,7 +7,7 @@
 | FR-001 | Upload local audio/video source media. | Must | Desktop workflow only. |
 | FR-002 | Compute a stable local fingerprint for cache lookup. | Must | Fingerprint includes bytes and file size. |
 | FR-003 | Show cache availability without automatically consuming paid API tokens. | Must | `Load Cache` and `Transcribe` are separate actions. |
-| FR-004 | Transcribe source media with word-level timestamps. | Must | API server owns provider integration. |
+| FR-004 | Transcribe source media with word-level timestamps. | Must | API server owns provider integration; `auto` uses Stable-ts first and OpenAI as fallback. |
 | FR-005 | Build caption groups from words using deterministic local rules. | Must | Provider groups are not durable editor source. |
 | FR-006 | Let users edit group text, split/merge groups, and nudge timing boundaries. | Must | Word timestamps remain unchanged by group edits. |
 | FR-007 | Loop selected group playback and play full timeline from playhead. | Must | Keyboard workflow is primary. |
@@ -41,7 +41,7 @@
 
 ## Open Questions
 
-- Which transcription model gives the best Ukrainian word timestamps for this
-  source material?
-- Is a separate forced-alignment stage needed after manual text edits?
+- Which Stable-ts model/VAD settings give the best Ukrainian word timestamps for
+  this source material?
+- Is MFA the separate forced-alignment stage after manual text edits?
 - What CapCut project format should be targeted for direct caption/cut import?

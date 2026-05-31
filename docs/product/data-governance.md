@@ -3,10 +3,12 @@
 | Data | Classification | Stored Where | Retention | Owner |
 | --- | --- | --- | --- | --- |
 | OpenAI API key | Secret | `apps/api/.env` | User-managed | API server |
+| Stable-ts model config/cache | Local runtime metadata/model files | `apps/api/.env` and Whisper cache directory | User-managed | API server |
 | Source media file | User content | Browser session; sent to API/provider during transcription | Not persisted by app | User/browser |
 | Caption words/groups | User content | Browser localStorage | Until browser data is cleared or overwritten | Storage service |
 | Skip zones | User edit metadata | Browser localStorage, serialized without temporary object URLs | Until browser data is cleared or overwritten | Storage service |
 | Caption settings | User preferences | Browser localStorage | Until browser data is cleared or overwritten | Storage service |
+| CapCut project identity | Local project metadata | Browser localStorage | Until browser data is cleared or overwritten | Storage service |
 | Console diagnostics | Developer diagnostics | Browser console | Session/devtools retention | Flow logger |
 
 ## Rules
@@ -14,10 +16,15 @@
 - Never expose API keys to browser code.
 - Do not log secrets or raw auth headers.
 - Do not persist source media bytes in browser storage.
-- Keep cache identity scoped by fingerprint and language.
+- Keep transcription cache identity scoped by fingerprint and language. The
+  cache namespace was bumped after adding Stable-ts; future work should include
+  provider/model/version in the key.
+- Keep saved editor projects scoped by stable source identity: file
+  fingerprint or CapCut project path plus main timeline id.
 - Normalize cached data through the caption domain before editor state writes.
 - Do not show saved words/groups as active editor content without selected
   source media; saved transcript data may be used only after file fingerprint
-  matching or an explicit cache load.
+  matching, CapCut project identity matching, or an explicit cache load.
 - Do not persist browser object URLs. Saved skip zones are rebound to the fresh
-  object URL after the user selects the matching source media.
+  object URL or imported CapCut stem URL after the user selects the matching
+  source media.

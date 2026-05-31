@@ -5,6 +5,7 @@ import type { CaptionGroup } from '../types'
 
 type CaptionEditorProps = {
   groups: CaptionGroup[]
+  aligningGroupIds?: string[]
   selectedGroupId?: string
   totalGroups?: number
   onSelect: (groupId: string) => void
@@ -20,6 +21,7 @@ type CaptionEditorProps = {
 
 export function CaptionEditor({
   groups,
+  aligningGroupIds = [],
   selectedGroupId,
   totalGroups,
   onSelect,
@@ -35,6 +37,7 @@ export function CaptionEditor({
   const rowRefs = useRef(new Map<string, HTMLElement>())
   const textInputRefs = useRef(new Map<string, HTMLInputElement>())
   const pendingTextFocusRef = useRef<'start' | 'end' | undefined>(undefined)
+  const aligningGroupIdSet = new Set(aligningGroupIds)
   const runRowAction = (event: MouseEvent<HTMLButtonElement>, action: () => void) => {
     event.stopPropagation()
     action()
@@ -81,6 +84,7 @@ export function CaptionEditor({
           const isSelected = group.id === selectedGroupId
           const textValue = group.textOverride ?? group.text
           const isPending = group.wordIds.length === 0 && textValue === 'Transcribing...'
+          const isAligning = aligningGroupIdSet.has(group.id)
 
           return (
             <article
@@ -93,7 +97,7 @@ export function CaptionEditor({
 
                 rowRefs.current.delete(group.id)
               }}
-              className={`caption-row ${isSelected ? 'selected' : ''} ${isPending ? 'pending' : ''}`}
+              className={`caption-row ${isSelected ? 'selected' : ''} ${isPending || isAligning ? 'pending' : ''}`}
               onClick={() => onSelect(group.id)}
             >
               <div className="caption-row-time">
@@ -103,7 +107,7 @@ export function CaptionEditor({
                     min={0}
                     step={timingNudgeStep}
                     value={group.start.toFixed(3)}
-                    disabled={isPending}
+                    disabled={isPending || isAligning}
                     onChange={(event) => onTimingChange(group.id, Number(event.target.value), group.end)}
                     onClick={(event) => event.stopPropagation()}
                     aria-label={`Start time ${group.id}`}
@@ -121,7 +125,7 @@ export function CaptionEditor({
                   textInputRefs.current.delete(group.id)
                 }}
                 value={textValue}
-                readOnly={isPending}
+                readOnly={isPending || isAligning}
                 onChange={(event) => onTextChange(group.id, event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
@@ -148,7 +152,7 @@ export function CaptionEditor({
                 <button
                   type="button"
                   title="Play this group"
-                  disabled={isPending}
+                  disabled={isPending || isAligning}
                   onClick={(event) => runRowAction(event, () => onPlayGroup(group.id))}
                 >
                   <Play size={15} />
@@ -156,7 +160,7 @@ export function CaptionEditor({
                 <button
                   type="button"
                   title="Split this group"
-                  disabled={isPending}
+                  disabled={isPending || isAligning}
                   onClick={(event) => runRowAction(event, () => onSplit(group.id))}
                 >
                   <Scissors size={15} />
@@ -164,7 +168,7 @@ export function CaptionEditor({
                 <button
                   type="button"
                   title="Merge with next group"
-                  disabled={isPending}
+                  disabled={isPending || isAligning}
                   onClick={(event) => runRowAction(event, () => onMergeNext(group.id))}
                 >
                   <Combine size={15} />

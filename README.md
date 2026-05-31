@@ -18,14 +18,23 @@ derived audio stems. The map preserves tracks, source/target timing, markers,
 project gaps, and source-cut boundaries; stems are regenerated with `ffmpeg`
 for playback and waveform rendering.
 
+MFA forced alignment is a separate refinement layer: transcription creates or
+updates text, while Montreal Forced Aligner can later tighten timestamps for the
+selected, edited, or all visible caption groups.
+
 ## MVP Flow
 
 1. Upload audio or video in the web app.
-2. Transcribe with OpenAI `whisper-1` word timestamps.
+2. Transcribe with the local API provider. `TRANSCRIPTION_PROVIDER=auto`
+   prefers `stable-ts` for Whisper word timestamps, silence suppression, and
+   VAD-backed timing cleanup, then falls back to OpenAI `whisper-1` when the
+   local model is unavailable.
 3. Ingest transcription words through the caption domain and rebuild groups
    locally with deterministic caption rules.
 4. Edit split/merge/text in the UI.
-5. Export `.srt`.
+5. Optionally run MFA alignment when the text is correct but timestamps need
+   refinement.
+6. Export `.srt`.
 
 Manual text and timing edits are autosaved in the browser and are included in the SRT export. Caption groups are normalized so each non-final group is trimmed to the next group start, preventing overlapping subtitle blocks without moving the next group's start. Timeline detail is based on real time units and 30 fps frame steps, so manual nudges move caption starts by one video frame. Audio files are fingerprinted locally, so repeated uploads of the same file and language reuse the cached transcription instead of calling the API again. `Regroup` rebuilds blocks from the original word timestamps, so use it before text polishing or manual timing nudges.
 
@@ -44,13 +53,22 @@ cd apps/api
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-OPENAI_API_KEY=... uvicorn app.main:app --reload --port 8787
+TRANSCRIPTION_PROVIDER=auto OPENAI_API_KEY=... uvicorn app.main:app --reload --port 8787
 ```
 
 Install `ffmpeg`/`ffprobe` locally for long media transcription chunking.
+Install `apps/api/requirements.txt` to enable `stable-ts`; the first local
+transcription downloads the configured Whisper model (`STABLE_TS_MODEL=base` by
+default). Keep `OPENAI_API_KEY` set if you want the `auto` fallback or choose
+`TRANSCRIPTION_PROVIDER=openai`.
 Set `VITE_TRANSCRIBE_CHUNK_CONCURRENCY` for the web kept-chunk transcription
 pool, and `MAX_PARALLEL_SEGMENT_TRANSCRIPTIONS` for the API batch endpoint, if
 your OpenAI project limits allow more parallel requests.
+
+Install Montreal Forced Aligner separately when you want the `Align selected`,
+`Align edited`, or `Align all` buttons to refine timestamps. The API shells out
+to `mfa align_one`; see [docs/mfa-alignment.md](docs/mfa-alignment.md) for the
+command shape and environment variables.
 
 ## API Debugging
 

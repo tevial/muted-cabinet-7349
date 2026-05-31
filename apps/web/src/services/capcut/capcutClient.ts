@@ -1,5 +1,10 @@
 import type { CapCutPatchManifest } from '../../domain/captions'
-import type { CapCutProjectImport, CapCutSourcePreview, CapCutTimelineMap } from '../../contracts/capcut'
+import type {
+  CapCutAudioStem,
+  CapCutProjectImport,
+  CapCutSourcePreview,
+  CapCutTimelineMap,
+} from '../../contracts/capcut'
 import { flowLog, flowWarn } from '../../shared/observability/flowLogger'
 import { apiBase } from '../api/apiConfig'
 
@@ -103,6 +108,13 @@ const postJson = async <T>(path: string, payload: unknown, fallbackError: string
   return response.json() as Promise<T>
 }
 
+const getSafeStemFileName = (stem: CapCutAudioStem) => {
+  const label = stem.label || stem.id || 'capcut-stem'
+  const safeLabel = label.trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '')
+
+  return `${safeLabel || 'capcut-stem'}.wav`
+}
+
 export const listCapCutProjects = async (limit = 120): Promise<CapCutProjectListResponse> => {
   flowLog('api: GET /api/capcut/projects', { baseUrl: apiBase, limit })
   const response = await fetch(`${apiBase}/api/capcut/projects?limit=${limit}`)
@@ -149,6 +161,24 @@ export const importCapCutProject = async (projectPath: string): Promise<CapCutPr
       url: `${apiBase}${stem.url}`,
     })),
   }
+}
+
+export const loadCapCutStemFile = async (stem: CapCutAudioStem): Promise<File> => {
+  flowLog('api: GET CapCut stem file', {
+    label: stem.label,
+    trackId: stem.trackId,
+    url: stem.url,
+  })
+  const response = await fetch(stem.url)
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'CapCut audio stem download failed.'))
+  }
+
+  const blob = await response.blob()
+  return new File([blob], getSafeStemFileName(stem), {
+    type: blob.type || 'audio/wav',
+  })
 }
 
 export const loadCapCutSourcePreview = async (

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { alignFileSegment, isAlignmentServiceError } from '../../services/alignment/alignmentClient'
 import { transcribeFile, transcribeFileSegment } from '../../services/transcription/transcriptionClient'
 import {
+  applyAlignedWordsToGroup,
   buildCapCutPatchManifest,
   defaultGroupingSettings,
   exportSrt,
   groupWords,
+  getCaptionGaps,
   ingestTranscription,
   normalizeGroupTimings,
   nudgeGroupEndBoundary,
@@ -14,6 +17,7 @@ import {
   sanitizeCaptionWords,
   setGroupBoundary,
   timingNudgeStep,
+  type GroupBoundaryEditMode,
 } from '../../domain/captions'
 import { createAudioFingerprint } from '../../services/audio/audioFingerprint'
 import { downloadTextFile } from '../../shared/browser/downloadTextFile'
@@ -29,24 +33,29 @@ import {
 } from '../../shared/observability/flowLogger'
 import {
   createSavedProject,
+  getSavedProjectSourceKey,
   getTranscriptionCacheMeta,
   loadProject,
+  loadProjectBySource,
   loadTranscriptionCache,
   saveProject,
   saveTranscriptionCache,
+  type SavedProject,
+  type SavedProjectSource,
   type SavedTimelineSkipState,
 } from '../../services/storage/projectRepository'
 import {
   dryRunCapCutPatch,
   importCapCutProject,
   listCapCutProjects,
+  loadCapCutStemFile,
   loadCapCutSourcePreview,
   patchCapCutProject,
   type CapCutLocalAgentStatus,
   type CapCutPatchSummary,
   type CapCutProjectSummary,
 } from '../../services/capcut/capcutClient'
-import type { CaptionGroup, CaptionWord, GroupingSettings } from '../../contracts/captions'
+import type { AlignmentResult, CaptionGroup, CaptionWord, GroupingSettings } from '../../contracts/captions'
 import type { CapCutProjectImport, CapCutSourcePreview } from '../../contracts/capcut'
 import {
   cloneTimelineSkipState,
@@ -88,10 +97,13 @@ const getCombinedTextOverride = (first: CaptionGroup, second: CaptionGroup) => {
 const getTranscriptionWriteSettings = (settings: GroupingSettings): GroupingSettings =>
   settings.trimEmptyZones ? { ...settings, trimEmptyZones: false } : settings
 
-type TranscriptSource = {
-  audioFingerprint?: string
-  fileName?: string
-  fileSize?: number
+type TranscriptSource = SavedProjectSource
+
+type TranscriptionMediaSource = {
+  file: File
+  fingerprint: string
+  fileName: string
+  fileSize: number
 }
 
 type EditorHistorySnapshot = {
@@ -107,9 +119,25 @@ type EditorHistoryState = {
   future: EditorHistorySnapshot[]
 }
 
+type AlignmentTaskOutcome =
+  | {
+    groupId: string
+    kind: 'aligned'
+    range: TimelineRange
+    result: AlignmentResult
+  }
+  | {
+    groupId: string
+    kind: 'failed'
+    message: string
+  }
+
 const historyLimit = 20
 const minChunkTranscriptionDuration = 0.25
 const keptChunkTranscriptionConcurrency = getKeptChunkTranscriptionConcurrency()
+const alignmentPaddingSeconds = 0.35
+const mfaAlignmentConcurrency = 4
+const maxMfaServiceFailuresBeforeAbort = mfaAlignmentConcurrency
 
 const cloneWords = (sourceWords: CaptionWord[]) => sourceWords.map((word) => ({ ...word }))
 
@@ -157,6 +185,66 @@ const serializeTimelineSkipState = (state: TimelineSkipState): SavedTimelineSkip
     manualCuts,
     signature: state.signature,
   }
+}
+
+const getFileTranscriptSource = (
+  audioFingerprint: string,
+  fileName?: string,
+  fileSize?: number,
+): TranscriptSource => ({
+  audioFingerprint,
+  fileName,
+  fileSize,
+  sourceKind: 'file',
+})
+
+const getCapCutProjectName = (projectPath: string) => projectPath.split('/').at(-1) ?? 'CapCut project'
+
+const getLegacyCapCutTranscriptFingerprint = (projectImport: CapCutProjectImport) =>
+  `capcut:${projectImport.timelineMap.mainTimelineId}:${projectImport.timelineMap.durationUs}`
+
+const getCapCutTranscriptSource = (projectImport: CapCutProjectImport): TranscriptSource => {
+  const projectName = getCapCutProjectName(projectImport.timelineMap.projectPath)
+  const source: TranscriptSource = {
+    capCutProject: {
+      durationUs: projectImport.timelineMap.durationUs,
+      mainTimelineId: projectImport.timelineMap.mainTimelineId,
+      projectName,
+      projectPath: projectImport.timelineMap.projectPath,
+    },
+    fileName: projectName,
+    fileSize: 0,
+    sourceKind: 'capcutProject',
+  }
+
+  return {
+    ...source,
+    audioFingerprint: getSavedProjectSourceKey(source),
+  }
+}
+
+const doesSavedProjectMatchCapCutImport = (
+  project: SavedProject | null,
+  projectImport: CapCutProjectImport,
+  source: TranscriptSource,
+) => {
+  if (!project) return false
+
+  const savedCapCutProject = project.capCutProject
+  if (
+    savedCapCutProject?.projectPath === projectImport.timelineMap.projectPath &&
+    savedCapCutProject.mainTimelineId === projectImport.timelineMap.mainTimelineId
+  ) {
+    return true
+  }
+
+  return Boolean(
+    project.audioFingerprint &&
+    (
+      project.audioFingerprint === source.audioFingerprint ||
+      project.audioFingerprint === getLegacyCapCutTranscriptFingerprint(projectImport)
+    ),
+  )
 }
 
 const restoreTimelineSkipState = (
@@ -229,6 +317,13 @@ const mergeTranscribedChunkWords = (
   createWordIdFactory(`chunk_${String(chunkIndex + 1).padStart(4, '0')}`),
 )
 
+const getAlignmentRange = (group: CaptionGroup) => ({
+  start: Math.max(0, group.start - alignmentPaddingSeconds),
+  end: group.end + alignmentPaddingSeconds,
+})
+
+const getAlignmentWordIdPrefix = (groupId: string) => `align_${groupId.replace(/[^a-z0-9]+/gi, '_')}`
+
 export function CaptionWorkbench() {
   const [savedProject] = useState(() => loadProject())
   const initialWords: CaptionWord[] = []
@@ -244,9 +339,14 @@ export function CaptionWorkbench() {
   const [audioUrl, setAudioUrl] = useState<string | undefined>()
   const [language, setLanguage] = useState(savedProject?.language ?? 'uk')
   const [, setStatus] = useState(
-    savedProject ? 'Saved transcription is available after selecting its source file.' : 'Upload audio when ready.',
+    savedProject
+      ? 'Saved project is available after selecting its source file or loading its CapCut project.'
+      : 'Upload audio when ready.',
   )
   const [isTranscribing, setIsTranscribing] = useState(false)
+  const [alignmentDirtyGroupIds, setAlignmentDirtyGroupIds] = useState<Set<string>>(() => new Set())
+  const [aligningGroupIds, setAligningGroupIds] = useState<Set<string>>(() => new Set())
+  const [alignmentProgress, setAlignmentProgress] = useState<{ completed: number; total: number } | undefined>()
   const [isCapCutPatchOpen, setIsCapCutPatchOpen] = useState(false)
   const [isCapCutPatchBusy, setIsCapCutPatchBusy] = useState(false)
   const [isCapCutImportOpen, setIsCapCutImportOpen] = useState(false)
@@ -257,7 +357,9 @@ export function CaptionWorkbench() {
   const [capCutProjectPath, setCapCutProjectPath] = useState('')
   const [capCutPatchSummary, setCapCutPatchSummary] = useState<CapCutPatchSummary | undefined>()
   const [capCutProjectImport, setCapCutProjectImport] = useState<CapCutProjectImport | undefined>()
+  const capCutStemFileRef = useRef<{ file: File; stemUrl: string } | undefined>(undefined)
   const [selectedCapCutSourceCutBoundaryId, setSelectedCapCutSourceCutBoundaryId] = useState<string | undefined>()
+  const [selectedCaptionGapId, setSelectedCaptionGapId] = useState<string | undefined>()
   const [capCutSourcePreview, setCapCutSourcePreview] = useState<
     { boundaryId: string; preview: CapCutSourcePreview } | undefined
   >()
@@ -329,6 +431,39 @@ export function CaptionWorkbench() {
     setSettings(nextSnapshot.settings)
     setSkipState(nextSnapshot.skipState)
     setSelectedGroupId(nextSnapshot.selectedGroupId)
+    setAlignmentDirtyGroupIds(new Set())
+  }, [])
+  const applySavedEditorProject = useCallback((
+    project: SavedProject,
+    source: TranscriptSource,
+    sourceUrl: string | undefined,
+    mutationSource: string,
+  ) => {
+    const nextWords = cloneWords(project.words)
+    const nextGroups = cloneGroups(project.groups)
+    const nextSettings = cloneSettings(project.settings)
+    const nextSkipState = restoreTimelineSkipState(project.skipState, sourceUrl)
+    const nextSnapshot: EditorHistorySnapshot = {
+      groups: nextGroups,
+      selectedGroupId: nextGroups[0]?.id,
+      settings: nextSettings,
+      skipState: nextSkipState,
+      words: nextWords,
+    }
+
+    historySignatureRef.current = getHistorySignature(nextSnapshot)
+    wordMutationSourceRef.current = mutationSource
+    groupMutationSourceRef.current = mutationSource
+    settingsSnapshotRef.current = JSON.stringify(nextSettings)
+    setHistory({ past: [], future: [] })
+    setWords(nextWords)
+    setGroups(nextGroups)
+    setSettings(nextSettings)
+    setLanguage(project.language)
+    setSkipState(nextSkipState)
+    setSelectedGroupId(nextSnapshot.selectedGroupId)
+    setTranscriptSource(source)
+    setAlignmentDirtyGroupIds(new Set())
   }, [])
   const undo = useCallback(() => {
     const previous = history.past.at(-1)
@@ -354,17 +489,52 @@ export function CaptionWorkbench() {
     })
     setStatus('Redid editor action.')
   }, [applyHistorySnapshot, getEditorSnapshot, history])
-  const handleTranscribeRange = useCallback(async (start: number, end: number) => {
-    if (!file) {
-      throw new Error('Upload audio or video before transcribing a selected range.')
+  const getCapCutStemFile = useCallback(async () => {
+    const stem = capCutProjectImport?.stems[0]
+    if (!stem) return undefined
+
+    const cachedStem = capCutStemFileRef.current
+    if (cachedStem?.stemUrl === stem.url) return cachedStem.file
+
+    const stemFile = await loadCapCutStemFile(stem)
+    capCutStemFileRef.current = {
+      file: stemFile,
+      stemUrl: stem.url,
+    }
+    return stemFile
+  }, [capCutProjectImport])
+
+  const getActiveTranscriptionMediaSource = useCallback(async (): Promise<TranscriptionMediaSource> => {
+    if (file) {
+      const fingerprint = await ensureAudioFingerprint(file)
+      return {
+        file,
+        fingerprint,
+        fileName: file.name,
+        fileSize: file.size,
+      }
     }
 
+    const stemFile = await getCapCutStemFile()
+    if (!stemFile || !transcriptSource?.audioFingerprint) {
+      throw new Error('Upload audio/video or import a CapCut project before transcribing chunks.')
+    }
+
+    return {
+      file: stemFile,
+      fingerprint: transcriptSource.audioFingerprint,
+      fileName: transcriptSource.fileName ?? stemFile.name,
+      fileSize: stemFile.size,
+    }
+  }, [ensureAudioFingerprint, file, getCapCutStemFile, transcriptSource])
+
+  const handleTranscribeRange = useCallback(async (start: number, end: number) => {
     setIsTranscribing(true)
     setStatus(`Transcribing ${start.toFixed(2)}s - ${end.toFixed(2)}s...`)
 
     try {
-      const fingerprint = await ensureAudioFingerprint(file)
-      const rawResult = await transcribeFileSegment(file, language, start, end)
+      const mediaSource = await getActiveTranscriptionMediaSource()
+      const rawResult = await transcribeFileSegment(mediaSource.file, language, start, end)
       const segmentWords = sanitizeCaptionWords(rawResult.words)
       if (!segmentWords.length) {
         throw new Error('No words were detected in the selected range.')
@@ -379,23 +549,22 @@ export function CaptionWorkbench() {
       groupMutationSourceRef.current = 'segment transcribe'
       setWords(nextWords)
       setGroups(nextGroups)
+      setAlignmentDirtyGroupIds(new Set())
       setSelectedGroupId(nextGroups.find((group) => group.start >= start && group.start < end)?.id)
-      setTranscriptSource({
-        audioFingerprint: fingerprint,
-        fileName: file.name,
-        fileSize: file.size,
-      })
+      setTranscriptSource((current) => current?.sourceKind === 'capcutProject'
+        ? current
+        : getFileTranscriptSource(mediaSource.fingerprint, mediaSource.fileName, mediaSource.fileSize))
 
       const cacheResult = {
         text: nextWords.map((word) => word.text).join(' '),
         words: nextWords,
         groups: nextGroups,
       }
-      const cacheWrite = saveTranscriptionCache(fingerprint, file, language, cacheResult)
+      const cacheWrite = saveTranscriptionCache(mediaSource.fingerprint, mediaSource.file, language, cacheResult)
       flowLog('segment transcribe: applied', {
         cacheWriteOk: cacheWrite.ok,
         end,
-        fingerprint: shortFingerprint(fingerprint),
+        fingerprint: shortFingerprint(mediaSource.fingerprint),
         incomingWords: segmentWords.length,
         start,
         totalGroups: nextGroups.length,
@@ -411,15 +580,26 @@ export function CaptionWorkbench() {
     } finally {
       setIsTranscribing(false)
     }
-  }, [commitHistory, ensureAudioFingerprint, file, language, settings, words])
-  const updateGroupTiming = useCallback((groupId: string, start: number, end: number) => {
-    commitHistory('group timing edit')
+  }, [commitHistory, getActiveTranscriptionMediaSource, language, settings, words])
+  const updateGroupTiming = useCallback((groupId: string, start: number, end: number, mode: GroupBoundaryEditMode = 'linked') => {
+    commitHistory(mode === 'independent' ? 'group timing independent edit' : 'group timing edit')
     groupMutationSourceRef.current = 'group timing edit'
-    setGroups((current) => setGroupBoundary(current, groupId, start, end))
+    setGroups((current) => setGroupBoundary(current, groupId, start, end, { mode }))
   }, [commitHistory])
-  const handleCapCutSourceCutSelect = useCallback((boundaryId: string) => {
+  const captionGaps = useMemo(() => getCaptionGaps(groups), [groups])
+  const handleCapCutSourceCutSelect = useCallback((boundaryId?: string) => {
     setSelectedCapCutSourceCutBoundaryId(boundaryId)
+    setSelectedCaptionGapId(undefined)
     setCapCutSourcePreviewError(undefined)
+  }, [])
+  const handleCaptionGapSelect = useCallback((gapId?: string) => {
+    setSelectedCaptionGapId(gapId)
+    if (gapId) setSelectedCapCutSourceCutBoundaryId(undefined)
+  }, [])
+  const handleEditorSelect = useCallback((groupId: string) => {
+    setSelectedCaptionGapId(undefined)
+    setSelectedCapCutSourceCutBoundaryId(undefined)
+    setSelectedGroupId(groupId)
   }, [])
   const {
     addSkipRegion,
@@ -437,8 +617,11 @@ export function CaptionWorkbench() {
     resetPlaybackPosition,
     selectedSkipRegionId,
     setDetectedSilenceAdjustment,
+    setSilenceDetectionSettings,
     setZoomLevel,
     silenceAdjustmentConfig,
+    silenceDetectionSettingConfig,
+    silenceDetectionSettings,
     startLoopGroup,
     stopPlayback,
     timelineContainerRef,
@@ -447,9 +630,11 @@ export function CaptionWorkbench() {
     zoomLevel,
   } = useWaveSurferTimeline({
     audioUrl,
+    captionGaps,
     capCutTimelineMap: capCutProjectImport?.timelineMap,
     contentDuration: totalDuration,
     groups,
+    selectedCaptionGapId,
     selectedGroupId,
     selectedCapCutSourceCutBoundaryId,
     skipState,
@@ -458,6 +643,7 @@ export function CaptionWorkbench() {
     setStatus,
     settings,
     words,
+    onCaptionGapSelect: handleCaptionGapSelect,
     onCapCutSourceCutSelect: handleCapCutSourceCutSelect,
     onHistoryCommit: commitHistory,
     onGroupTimingChange: updateGroupTiming,
@@ -470,11 +656,33 @@ export function CaptionWorkbench() {
       ),
     [capCutProjectImport, selectedCapCutSourceCutBoundaryId],
   )
+  const selectedCaptionGap = useMemo(
+    () => captionGaps.find((gap) => gap.id === selectedCaptionGapId),
+    [captionGaps, selectedCaptionGapId],
+  )
   const selectedCapCutSourcePreview =
     capCutSourcePreview && selectedCapCutSourceCutBoundary &&
     capCutSourcePreview.boundaryId === selectedCapCutSourceCutBoundary.id
       ? capCutSourcePreview.preview
       : undefined
+  const closeCaptionGapPanel = useCallback(() => {
+    setSelectedCaptionGapId(undefined)
+  }, [])
+  const linkSelectedCaptionGap = useCallback(() => {
+    const gap = selectedCaptionGap
+    if (!gap) return
+
+    const previous = groups.find((group) => group.id === gap.previousGroupId)
+    const next = groups.find((group) => group.id === gap.nextGroupId)
+    if (!previous || !next) return
+
+    commitHistory('link caption gap')
+    groupMutationSourceRef.current = 'link caption gap'
+    setGroups((current) => setGroupBoundary(current, previous.id, previous.start, next.start))
+    setSelectedCaptionGapId(undefined)
+    setSelectedGroupId(previous.id)
+    setStatus('Caption gap linked back to the next group.')
+  }, [commitHistory, groups, selectedCaptionGap])
   const closeCapCutSourceCutPanel = useCallback(() => {
     setSelectedCapCutSourceCutBoundaryId(undefined)
     setCapCutSourcePreviewError(undefined)
@@ -506,6 +714,7 @@ export function CaptionWorkbench() {
     () => keptTimelineRanges.filter((range) => range.end - range.start >= minChunkTranscriptionDuration),
     [keptTimelineRanges],
   )
+  const hasChunkTranscriptionSource = Boolean(file || capCutProjectImport?.stems[0])
   const visibleCaptionGroups = useMemo(
     () => getVisibleCaptionGroups(groups, keptTimelineRanges),
     [groups, keptTimelineRanges],
@@ -513,10 +722,240 @@ export function CaptionWorkbench() {
   const visibleSelectedGroupId = visibleCaptionGroups.some((group) => group.id === selectedGroupId)
     ? selectedGroupId
     : undefined
+  const visibleGroupIds = useMemo(
+    () => new Set(visibleCaptionGroups.map((group) => group.id)),
+    [visibleCaptionGroups],
+  )
+  const dirtyVisibleGroupIds = useMemo(
+    () => Array.from(alignmentDirtyGroupIds).filter((groupId) => visibleGroupIds.has(groupId)),
+    [alignmentDirtyGroupIds, visibleGroupIds],
+  )
+  const isAligningCaptions = aligningGroupIds.size > 0
+  const alignmentProgressLabel = alignmentProgress
+    ? `Aligning ${alignmentProgress.completed}/${alignmentProgress.total}`
+    : undefined
+  const setAlignmentBusy = useCallback((groupIds: string[], isBusy: boolean) => {
+    setAligningGroupIds((current) => {
+      const next = new Set(current)
+      groupIds.forEach((groupId) => {
+        if (isBusy) {
+          next.add(groupId)
+        } else {
+          next.delete(groupId)
+        }
+      })
+      return next
+    })
+  }, [])
+  const markAlignmentDirty = useCallback((groupIds: string[]) => {
+    setAlignmentDirtyGroupIds((current) => {
+      const next = new Set(current)
+      groupIds.forEach((groupId) => next.add(groupId))
+      return next
+    })
+  }, [])
+  const clearAlignmentDirty = useCallback((groupIds: string[]) => {
+    const cleanIds = new Set(groupIds)
+    setAlignmentDirtyGroupIds((current) => new Set(Array.from(current).filter((groupId) => !cleanIds.has(groupId))))
+  }, [])
+  const alignCaptionGroups = useCallback(async (requestedGroupIds: string[], source: string) => {
+    const uniqueGroupIds = Array.from(new Set(requestedGroupIds))
+    const requestedGroups = uniqueGroupIds
+      .map((groupId) => groups.find((group) => group.id === groupId))
+      .filter((group): group is CaptionGroup => Boolean(group))
+      .filter((group) => group.wordIds.length > 0 && getGroupDisplayText(group).trim())
+
+    if (!requestedGroups.length) {
+      setStatus('No caption groups are available for MFA alignment.')
+      return
+    }
+    if (!hasChunkTranscriptionSource) {
+      setStatus('Upload audio/video or import a CapCut project before MFA alignment.')
+      return
+    }
+
+    stopPlayback()
+    setAlignmentBusy(requestedGroups.map((group) => group.id), true)
+    setAlignmentProgress({ completed: 0, total: requestedGroups.length })
+    setStatus(`Running MFA alignment for ${requestedGroups.length} group(s), ${mfaAlignmentConcurrency} at a time...`)
+
+    let nextWords = words
+    let nextGroups = groups
+    let nextApplyIndex = 0
+    const completedOutcomes = new Map<number, AlignmentTaskOutcome>()
+    const alignedGroupIds: string[] = []
+    const failedMessages: string[] = []
+    let serviceFailureCount = 0
+    let shouldAbortAlignment = false
+
+    try {
+      const mediaSource = await getActiveTranscriptionMediaSource()
+      commitHistory(source)
+
+      const applyReadyOutcomes = () => {
+        while (completedOutcomes.has(nextApplyIndex)) {
+          const outcome = completedOutcomes.get(nextApplyIndex)
+          completedOutcomes.delete(nextApplyIndex)
+          nextApplyIndex += 1
+          if (!outcome) continue
+
+          if (outcome.kind === 'aligned') {
+            const currentGroup = nextGroups.find((group) => group.id === outcome.groupId)
+            if (!currentGroup) {
+              failedMessages.push(`${outcome.groupId}: caption group no longer exists.`)
+            } else {
+              const applied = applyAlignedWordsToGroup({
+                words: nextWords,
+                groups: nextGroups,
+                groupId: currentGroup.id,
+                alignedWords: outcome.result.words,
+                createWordId: createWordIdFactory(getAlignmentWordIdPrefix(currentGroup.id)),
+              })
+
+              if (applied.group) {
+                nextWords = applied.words
+                nextGroups = applied.groups
+                alignedGroupIds.push(currentGroup.id)
+
+                wordMutationSourceRef.current = source
+                groupMutationSourceRef.current = source
+                setWords(nextWords)
+                setGroups(nextGroups)
+                clearAlignmentDirty([currentGroup.id])
+                setSelectedGroupId((current) =>
+                  current && nextGroups.some((group) => group.id === current)
+                    ? current
+                    : currentGroup.id,
+                )
+
+                flowLog('mfa alignment: group applied', {
+                  groupId: currentGroup.id,
+                  incomingWords: outcome.result.words.length,
+                  unmatchedWords: outcome.result.unmatchedWords,
+                  range: outcome.range,
+                })
+              } else {
+                failedMessages.push(`${currentGroup.id}: MFA did not return word intervals for this group.`)
+              }
+            }
+          } else {
+            failedMessages.push(outcome.message)
+          }
+
+          setAlignmentBusy([outcome.groupId], false)
+          setAlignmentProgress((current) =>
+            current
+              ? { ...current, completed: Math.min(current.completed + 1, current.total) }
+              : current,
+          )
+          setStatus(
+            `MFA aligned ${alignedGroupIds.length}/${requestedGroups.length} group(s)`
+            + (failedMessages.length ? `; ${failedMessages.length} failed.` : '.'),
+          )
+        }
+      }
+
+      await runWithConcurrency(requestedGroups, mfaAlignmentConcurrency, async (requestedGroup, index) => {
+        const range = getAlignmentRange(requestedGroup)
+        const text = getGroupDisplayText(requestedGroup)
+
+        try {
+          const result = await alignFileSegment(mediaSource.file, language, range.start, range.end, text)
+          completedOutcomes.set(
+            index,
+            result.words.length
+              ? {
+                groupId: requestedGroup.id,
+                kind: 'aligned',
+                range,
+                result,
+              }
+              : {
+                groupId: requestedGroup.id,
+                kind: 'failed',
+                message: `${requestedGroup.id}: MFA did not return word intervals for this group.`,
+              },
+          )
+        } catch (error) {
+          if (isAlignmentServiceError(error)) {
+            serviceFailureCount += 1
+            if (serviceFailureCount >= maxMfaServiceFailuresBeforeAbort && !shouldAbortAlignment) {
+              shouldAbortAlignment = true
+              flowWarn('mfa alignment: aborting after repeated service errors', {
+                failures: serviceFailureCount,
+                requestedGroups: requestedGroups.length,
+              })
+            }
+          }
+
+          completedOutcomes.set(index, {
+            groupId: requestedGroup.id,
+            kind: 'failed',
+            message: `${requestedGroup.id}: ${error instanceof Error ? error.message : 'MFA alignment failed.'}`,
+          })
+        }
+
+        applyReadyOutcomes()
+      }, { shouldStop: () => shouldAbortAlignment })
+      applyReadyOutcomes()
+
+      if (shouldAbortAlignment) {
+        const remainingGroups = Math.max(0, requestedGroups.length - nextApplyIndex)
+        setStatus(
+          `MFA stopped after repeated service errors. `
+          + `${alignedGroupIds.length} group(s) applied; ${remainingGroups} not processed.`,
+        )
+        return
+      }
+
+      if (!alignedGroupIds.length && failedMessages.length) {
+        setStatus(failedMessages[0])
+        return
+      }
+
+      setStatus(
+        failedMessages.length
+          ? `MFA aligned ${alignedGroupIds.length} group(s); ${failedMessages.length} failed.`
+          : `MFA aligned ${alignedGroupIds.length} group(s).`,
+      )
+    } catch (error) {
+      flowWarn('mfa alignment: failed', {
+        message: error instanceof Error ? error.message : 'MFA alignment failed.',
+        requestedGroups: requestedGroups.length,
+      })
+      setStatus(error instanceof Error ? error.message : 'MFA alignment failed.')
+    } finally {
+      setAlignmentBusy(requestedGroups.map((group) => group.id), false)
+      setAlignmentProgress(undefined)
+    }
+  }, [
+    clearAlignmentDirty,
+    commitHistory,
+    getActiveTranscriptionMediaSource,
+    groups,
+    hasChunkTranscriptionSource,
+    language,
+    setAlignmentBusy,
+    stopPlayback,
+    words,
+  ])
+  const alignSelectedGroup = useCallback(() => {
+    if (!visibleSelectedGroupId) {
+      setStatus('Select a visible caption group before running MFA alignment.')
+      return
+    }
+    void alignCaptionGroups([visibleSelectedGroupId], 'mfa alignment: selected group')
+  }, [alignCaptionGroups, visibleSelectedGroupId])
+  const alignDirtyGroups = useCallback(() => {
+    void alignCaptionGroups(dirtyVisibleGroupIds, 'mfa alignment: edited groups')
+  }, [alignCaptionGroups, dirtyVisibleGroupIds])
+  const alignVisibleGroups = useCallback(() => {
+    void alignCaptionGroups(visibleCaptionGroups.map((group) => group.id), 'mfa alignment: visible groups')
+  }, [alignCaptionGroups, visibleCaptionGroups])
   const handleTranscribeKeptChunks = useCallback(async () => {
-    if (!file) {
-      flowWarn('chunk transcribe: blocked, no file')
-      setStatus('Upload audio or video before transcribing kept chunks.')
+    if (!hasChunkTranscriptionSource) {
+      flowWarn('chunk transcribe: blocked, no media source')
+      setStatus('Upload audio/video or import a CapCut project before transcribing kept chunks.')
       return
     }
     if (!transcribableKeptRanges.length) {
@@ -531,7 +970,7 @@ export function CaptionWorkbench() {
     )
 
     try {
-      const fingerprint = await ensureAudioFingerprint(file)
+      const mediaSource = await getActiveTranscriptionMediaSource()
       const transcriptionSettings = getTranscriptionWriteSettings(settings)
       const ranges = transcribableKeptRanges.map((range) => ({ ...range }))
       let nextWords = words.filter((word) => !ranges.some((range) => doesTimedItemOverlapRange(word, range)))
@@ -562,8 +1001,9 @@ export function CaptionWorkbench() {
       flowLog('chunk transcribe: request', {
         chunks: ranges.length,
         concurrency: keptChunkTranscriptionConcurrency,
-        fingerprint: shortFingerprint(fingerprint),
+        fingerprint: shortFingerprint(mediaSource.fingerprint),
         language,
+        mediaFile: summarizeFile(mediaSource.file),
         ranges,
       })
 
@@ -572,7 +1012,7 @@ export function CaptionWorkbench() {
       applyChunkProgress('transcribe kept chunks: pending')
 
       await runWithConcurrency(ranges, keptChunkTranscriptionConcurrency, async (range, index) => {
-        const rawResult = await transcribeFileSegment(file, language, range.start, range.end)
+        const rawResult = await transcribeFileSegment(mediaSource.file, language, range.start, range.end)
         const segmentWords = sanitizeCaptionWords(rawResult.words)
 
         if (segmentWords.length) {
@@ -596,26 +1036,25 @@ export function CaptionWorkbench() {
       groupMutationSourceRef.current = 'transcribe kept chunks'
       setWords(nextWords)
       setGroups(nextGroups)
+      setAlignmentDirtyGroupIds(new Set())
       setSelectedGroupId(nextGroups.find((group) =>
         ranges.some((range) => group.start >= range.start && group.start < range.end),
       )?.id)
-      setTranscriptSource({
-        audioFingerprint: fingerprint,
-        fileName: file.name,
-        fileSize: file.size,
-      })
+      setTranscriptSource((current) => current?.sourceKind === 'capcutProject'
+        ? current
+        : getFileTranscriptSource(mediaSource.fingerprint, mediaSource.fileName, mediaSource.fileSize))
 
       const cacheResult = {
         text: nextWords.map((word) => word.text).join(' '),
         words: nextWords,
         groups: nextGroups,
       }
-      const cacheWrite = saveTranscriptionCache(fingerprint, file, language, cacheResult)
+      const cacheWrite = saveTranscriptionCache(mediaSource.fingerprint, mediaSource.file, language, cacheResult)
       flowLog('chunk transcribe: applied', {
         cacheWriteOk: cacheWrite.ok,
         chunks: ranges.length,
         concurrency: keptChunkTranscriptionConcurrency,
-        fingerprint: shortFingerprint(fingerprint),
+        fingerprint: shortFingerprint(mediaSource.fingerprint),
         incomingWords,
         totalGroups: nextGroups.length,
         totalWords: nextWords.length,
@@ -641,9 +1080,9 @@ export function CaptionWorkbench() {
     }
   }, [
     commitHistory,
-    ensureAudioFingerprint,
-    file,
+    getActiveTranscriptionMediaSource,
     groups,
+    hasChunkTranscriptionSource,
     language,
     settings,
     stopPlayback,
@@ -720,29 +1159,64 @@ export function CaptionWorkbench() {
         throw new Error('No audible stems were rendered from this CapCut project.')
       }
 
+      const capCutSource = getCapCutTranscriptSource(result)
+      const savedCapCutProject =
+        loadProjectBySource(capCutSource) ??
+        (
+          doesSavedProjectMatchCapCutImport(savedProject, result, capCutSource)
+            ? savedProject
+            : null
+        )
+      const nextSkipState = createTimelineSkipState(firstStem.url)
+
       setCapCutProjectImport(result)
+      capCutStemFileRef.current = undefined
       setAudioUrl(firstStem.url)
       setFile(undefined)
-      setAudioFingerprint(undefined)
-      setTranscriptSource({
-        audioFingerprint: `capcut:${result.timelineMap.mainTimelineId}:${result.timelineMap.durationUs}`,
-        fileName: result.timelineMap.projectPath.split('/').at(-1) ?? 'CapCut project',
-        fileSize: 0,
-      })
+      setAudioFingerprint(capCutSource.audioFingerprint)
       setSelectedCapCutSourceCutBoundaryId(undefined)
+      setSelectedCaptionGapId(undefined)
       setCapCutSourcePreview(undefined)
       setCapCutSourcePreviewError(undefined)
-      setSkipState(createTimelineSkipState(firstStem.url))
       setIsCapCutImportOpen(false)
-      setStatus(
-        `Loaded CapCut project: ${result.timelineMap.tracks.length} tracks, ${result.stems.length} audio stem(s), ${result.timelineMap.sourceCutBoundaries.length} source cuts.`,
-      )
+
+      if (savedCapCutProject) {
+        applySavedEditorProject(
+          savedCapCutProject,
+          capCutSource,
+          firstStem.url,
+          'capcut import: restore saved project',
+        )
+        setStatus(
+          `Loaded CapCut project and restored ${savedCapCutProject.groups.length} saved caption groups.`,
+        )
+      } else {
+        historySignatureRef.current = getHistorySignature({
+          groups: [],
+          selectedGroupId: undefined,
+          settings,
+          skipState: nextSkipState,
+          words: [],
+        })
+        wordMutationSourceRef.current = 'capcut import: empty project'
+        groupMutationSourceRef.current = 'capcut import: empty project'
+        setHistory({ past: [], future: [] })
+        setWords([])
+        setGroups([])
+        setAlignmentDirtyGroupIds(new Set())
+        setSelectedGroupId(undefined)
+        setSkipState(nextSkipState)
+        setTranscriptSource(capCutSource)
+        setStatus(
+          `Loaded CapCut project: ${result.timelineMap.tracks.length} tracks, ${result.stems.length} audio stem(s), ${result.timelineMap.sourceCutBoundaries.length} source cuts. No saved editor state yet.`,
+        )
+      }
     } catch (error) {
       setCapCutPatchError(error instanceof Error ? error.message : 'CapCut project import failed.')
     } finally {
       setIsCapCutImportBusy(false)
     }
-  }, [capCutProjectPath, stopPlayback])
+  }, [applySavedEditorProject, capCutProjectPath, savedProject, settings, stopPlayback])
   const runCapCutPatchDryRun = useCallback(async () => {
     const projectPath = capCutProjectPath.trim()
     if (!projectPath) {
@@ -909,22 +1383,34 @@ export function CaptionWorkbench() {
   const getTranscriptionSummary = (wordCount: number, groupCount: number) =>
     `${wordCount} words, ${groupCount} groups`
 
+  const getSavedProjectForFingerprint = useCallback((fingerprint: string, source?: TranscriptSource) => {
+    const projectForSource = loadProjectBySource(source ?? getFileTranscriptSource(fingerprint))
+    if (projectForSource?.language === language) return projectForSource
+
+    if (savedProject?.audioFingerprint === fingerprint && savedProject.language === language) return savedProject
+
+    return null
+  }, [language, savedProject])
+
   const getCachedTranscription = useCallback((fingerprint: string) => {
     const cachedTranscription = loadTranscriptionCache(fingerprint, language)
     if (cachedTranscription) return cachedTranscription
 
-    if (savedProject?.audioFingerprint !== fingerprint || savedProject.language !== language) return null
+    if (transcriptSource?.sourceKind === 'capcutProject') return null
+
+    const projectForSource = getSavedProjectForFingerprint(fingerprint, transcriptSource)
+    if (!projectForSource) return null
 
     return {
-      fileName: savedProject.fileName ?? 'this audio',
-      fileSize: savedProject.fileSize,
+      fileName: projectForSource.fileName ?? 'this audio',
+      fileSize: projectForSource.fileSize,
       result: {
-        text: savedProject.words.map((word) => word.text).join(' '),
-        words: savedProject.words,
-        groups: savedProject.groups,
+        text: projectForSource.words.map((word) => word.text).join(' '),
+        words: projectForSource.words,
+        groups: projectForSource.groups,
       },
     }
-  }, [language, savedProject])
+  }, [getSavedProjectForFingerprint, language, transcriptSource])
 
   const cachedTranscription = audioFingerprint ? getCachedTranscription(audioFingerprint) : null
   const hasCachedTranscript = Boolean(cachedTranscription)
@@ -965,19 +1451,23 @@ export function CaptionWorkbench() {
     commitHistory('cache load')
     wordMutationSourceRef.current = 'cache load'
     setWords(ingested.result.words)
+    setAlignmentDirtyGroupIds(new Set())
     setActiveGroups(ingested.result.groups, 'cache load', {
       fingerprint: shortFingerprint(fingerprint),
       fileName: cachedTranscription.fileName,
     }, { recordHistory: false })
-    setTranscriptSource({
-      audioFingerprint: fingerprint,
-      fileName: sourceFile?.name ?? cachedTranscription.fileName,
-      fileSize: sourceFile?.size ?? cachedTranscription.fileSize,
-    })
+    const nextSource = transcriptSource?.audioFingerprint === fingerprint
+      ? transcriptSource
+      : getFileTranscriptSource(fingerprint, sourceFile?.name ?? cachedTranscription.fileName, sourceFile?.size ?? cachedTranscription.fileSize)
+    const projectForSource = getSavedProjectForFingerprint(fingerprint, nextSource)
+
+    setTranscriptSource((current) => current?.sourceKind === 'capcutProject' && current.audioFingerprint === fingerprint
+      ? current
+      : nextSource)
     setSkipState(
       restoreTimelineSkipState(
-        savedProject?.audioFingerprint === fingerprint && savedProject.language === language
-          ? savedProject.skipState
+        projectForSource
+          ? projectForSource.skipState
           : undefined,
         audioUrl,
       ),
@@ -1029,6 +1519,11 @@ export function CaptionWorkbench() {
       language,
     })
     if (audioUrl) URL.revokeObjectURL(audioUrl)
+    setCapCutProjectImport(undefined)
+    capCutStemFileRef.current = undefined
+    setSelectedCapCutSourceCutBoundaryId(undefined)
+    setCapCutSourcePreview(undefined)
+    setCapCutSourcePreviewError(undefined)
     setFile(nextFile)
     setAudioFingerprint(undefined)
     setAudioUrl(URL.createObjectURL(nextFile))
@@ -1058,6 +1553,7 @@ export function CaptionWorkbench() {
         groupMutationSourceRef.current = 'upload: clear stale transcript'
         setWords([])
         setGroups([])
+        setAlignmentDirtyGroupIds(new Set())
         setSkipState(createTimelineSkipState())
         setSelectedGroupId(undefined)
         setTranscriptSource(undefined)
@@ -1154,15 +1650,12 @@ export function CaptionWorkbench() {
       commitHistory('transcribe: response')
       wordMutationSourceRef.current = 'transcribe: response'
       setWords(ingested.result.words)
+      setAlignmentDirtyGroupIds(new Set())
       setActiveGroups(ingested.result.groups, 'transcribe: response', {
         fingerprint: shortFingerprint(fingerprint),
         cacheWriteOk: cacheWrite.ok,
       }, { recordHistory: false })
-      setTranscriptSource({
-        audioFingerprint: fingerprint,
-        fileName: file.name,
-        fileSize: file.size,
-      })
+      setTranscriptSource(getFileTranscriptSource(fingerprint, file.name, file.size))
       flowLog('transcribe: applied to editor', {
         fingerprint: shortFingerprint(fingerprint),
         words: ingested.result.words.length,
@@ -1193,6 +1686,7 @@ export function CaptionWorkbench() {
     setGroups((current) =>
       current.map((group) => (group.id === groupId ? { ...group, textOverride: text } : group)),
     )
+    markAlignmentDirty([groupId])
   }
 
   const nudgeGroupStart = useCallback((groupId: string, offset: number) => {
@@ -1241,6 +1735,7 @@ export function CaptionWorkbench() {
     setActiveGroups([...groups.slice(0, groupIndex), first, second, ...groups.slice(groupIndex + 1)], 'split group', {
       groupId,
     })
+    markAlignmentDirty([first.id, second.id])
     setSelectedGroupId(second.id)
     setStatus('Group split while preserving word timestamps.')
   }
@@ -1285,6 +1780,7 @@ export function CaptionWorkbench() {
       groupId,
       splitAt,
     })
+    markAlignmentDirty([first.id, second.id])
     setSelectedGroupId(second.id)
     setStatus('Group split from the text cursor.')
     return true
@@ -1311,6 +1807,7 @@ export function CaptionWorkbench() {
     setActiveGroups([...groups.slice(0, groupIndex - 1), merged, ...groups.slice(groupIndex + 1)], 'merge group with previous', {
       groupId,
     })
+    markAlignmentDirty([merged.id])
     setSelectedGroupId(merged.id)
     setStatus('Groups merged like a document line backspace.')
     return true
@@ -1337,6 +1834,7 @@ export function CaptionWorkbench() {
     setActiveGroups([...groups.slice(0, groupIndex), merged, ...groups.slice(groupIndex + 2)], 'merge group', {
       groupId,
     })
+    markAlignmentDirty([merged.id])
     setSelectedGroupId(merged.id)
     setStatus('Groups merged from their existing word timestamps.')
   }
@@ -1512,10 +2010,16 @@ export function CaptionWorkbench() {
       selectedSkipRegionId={selectedSkipRegionId}
       isPlaying={isPlaying}
       isTranscribing={isTranscribing}
+      isAligningCaptions={isAligningCaptions}
+      alignmentProgressLabel={alignmentProgressLabel}
+      aligningGroupIds={Array.from(aligningGroupIds)}
       canRedo={history.future.length > 0}
       canExportCutManifest={groups.length > 0 && keptTimelineRanges.length > 0}
       canSaveProject={canAutosaveProject}
-      canTranscribeKeptChunks={Boolean(file) && transcribableKeptRanges.length > 0}
+      canAlignCaptions={hasChunkTranscriptionSource && visibleCaptionGroups.length > 0}
+      canAlignSelectedCaption={hasChunkTranscriptionSource && Boolean(visibleSelectedGroupId)}
+      canTranscribeKeptChunks={hasChunkTranscriptionSource && transcribableKeptRanges.length > 0}
+      dirtyAlignmentCount={dirtyVisibleGroupIds.length}
       canUndo={history.past.length > 0}
       hasCachedTranscript={hasCachedTranscript}
       audioUrl={audioUrl}
@@ -1539,6 +2043,7 @@ export function CaptionWorkbench() {
       capCutSourceCutBoundary={selectedCapCutSourceCutBoundary}
       capCutSourcePreview={selectedCapCutSourcePreview}
       capCutSourcePreviewError={capCutSourcePreviewError}
+      captionGap={selectedCaptionGap}
       isCapCutImportBusy={isCapCutImportBusy}
       isCapCutImportOpen={isCapCutImportOpen}
       isCapCutPatchBusy={isCapCutPatchBusy}
@@ -1559,6 +2064,8 @@ export function CaptionWorkbench() {
       onCapCutImportRun={runCapCutImport}
       onCapCutSourceCutClose={closeCapCutSourceCutPanel}
       onCapCutSourcePreviewLoad={loadSelectedCapCutSourcePreview}
+      onCaptionGapClose={closeCaptionGapPanel}
+      onCaptionGapLink={linkSelectedCaptionGap}
       onCapCutPatchClose={() => setIsCapCutPatchOpen(false)}
       onCapCutPatchDryRun={runCapCutPatchDryRun}
       onCapCutPatchOpen={openCapCutPatchDialog}
@@ -1570,13 +2077,19 @@ export function CaptionWorkbench() {
       hasDetectedSilenceDraft={hasDetectedSilenceDraft}
       detectedSilenceAdjustment={detectedSilenceAdjustment}
       silenceAdjustmentConfig={silenceAdjustmentConfig}
+      silenceDetectionSettingConfig={silenceDetectionSettingConfig}
+      silenceDetectionSettings={silenceDetectionSettings}
       onDetectSilentSkipRegions={detectSilentSkipRegions}
       onDetectedSilenceAdjustmentChange={setDetectedSilenceAdjustment}
+      onSilenceDetectionSettingsChange={setSilenceDetectionSettings}
       onConfirmDetectedSilentSkipRegions={confirmDetectedSilentSkipRegions}
       onDeleteSelectedSkipRegion={deleteSelectedSkipRegion}
       onTranscribeKeptChunks={handleTranscribeKeptChunks}
+      onAlignDirtyGroups={alignDirtyGroups}
+      onAlignSelectedGroup={alignSelectedGroup}
+      onAlignVisibleGroups={alignVisibleGroups}
       onTimelineZoomChange={setZoomLevel}
-      onEditorSelect={setSelectedGroupId}
+      onEditorSelect={handleEditorSelect}
       onGroupTextChange={updateGroupText}
       onGroupTimingChange={updateGroupTiming}
       onSplitGroupAtCursor={splitGroupAtCursor}

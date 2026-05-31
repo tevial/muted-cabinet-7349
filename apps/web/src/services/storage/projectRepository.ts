@@ -2,20 +2,33 @@ import type { CaptionGroup, CaptionWord, GroupingSettings, TranscriptionResult }
 import { normalizeGroupingSettings, type EmptyZoneCut } from '../../domain/captions'
 
 export const projectStorageKey = 'capcut-caption-project-v1'
-const transcriptionCachePrefix = 'capcut-caption-transcription-v2'
+const projectBySourceStoragePrefix = 'capcut-caption-project-v2'
+const transcriptionCachePrefix = 'capcut-caption-transcription-v3'
+
+export type SavedCapCutProjectSource = {
+  durationUs: number
+  mainTimelineId: string
+  projectName: string
+  projectPath: string
+}
+
+export type SavedProjectSource = {
+  audioFingerprint?: string
+  capCutProject?: SavedCapCutProjectSource
+  fileName?: string
+  fileSize?: number
+  sourceKind?: 'file' | 'capcutProject'
+}
 
 export type SavedProject = {
   version: 1
   savedAt: string
-  audioFingerprint?: string
-  fileName?: string
-  fileSize?: number
   language: string
   words: CaptionWord[]
   groups: CaptionGroup[]
   settings: GroupingSettings
   skipState?: SavedTimelineSkipState
-}
+} & SavedProjectSource
 
 export type SavedTimelineSkipStateEdit = {
   id: string
@@ -42,6 +55,36 @@ export type CachedTranscription = {
 
 const getTranscriptionCacheKey = (audioFingerprint: string, language: string) =>
   `${transcriptionCachePrefix}:${language.trim().toLowerCase() || 'auto'}:${audioFingerprint}`
+
+const getStableStorageHash = (value: string) => {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return (hash >>> 0).toString(36)
+}
+
+const getProjectSourceStorageKey = (source: SavedProjectSource) => {
+  if (source.sourceKind === 'capcutProject' && source.capCutProject?.projectPath) {
+    const { mainTimelineId, projectPath } = source.capCutProject
+    return `capcut:${getStableStorageHash(`${projectPath}|${mainTimelineId}`)}`
+  }
+
+  if (source.audioFingerprint) {
+    return `file:${source.audioFingerprint}`
+  }
+
+  return undefined
+}
+
+export const getSavedProjectSourceKey = (source: SavedProjectSource) => getProjectSourceStorageKey(source)
+
+const getProjectBySourceStorageKey = (source: SavedProjectSource) => {
+  const sourceKey = getProjectSourceStorageKey(source)
+  return sourceKey ? `${projectBySourceStoragePrefix}:${sourceKey}` : undefined
+}
 
 const getStoredTranscriptCounts = (value: unknown) => {
   if (!value || typeof value !== 'object') return { words: 0, groups: 0 }
@@ -119,12 +162,49 @@ const normalizeSavedTimelineSkipState = (value: unknown): SavedTimelineSkipState
   }
 }
 
+const normalizeSavedCapCutProjectSource = (value: unknown): SavedCapCutProjectSource | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<SavedCapCutProjectSource>
+  if (typeof candidate.projectPath !== 'string' || typeof candidate.mainTimelineId !== 'string') return undefined
+
+  return {
+    durationUs: getFiniteNumber(candidate.durationUs) ?? 0,
+    mainTimelineId: candidate.mainTimelineId,
+    projectName: typeof candidate.projectName === 'string' && candidate.projectName
+      ? candidate.projectName
+      : candidate.projectPath.split('/').at(-1) ?? 'CapCut project',
+    projectPath: candidate.projectPath,
+  }
+}
+
+const normalizeSavedProject = (project: SavedProject): SavedProject | null => {
+  if (project.version !== 1 || !Array.isArray(project.words) || !Array.isArray(project.groups)) {
+    return null
+  }
+
+  const capCutProject = normalizeSavedCapCutProjectSource(project.capCutProject)
+  const sourceKind = project.sourceKind === 'capcutProject' && capCutProject
+    ? 'capcutProject'
+    : project.audioFingerprint
+      ? 'file'
+      : undefined
+
+  return {
+    ...project,
+    ...(sourceKind ? { sourceKind } : {}),
+    ...(capCutProject ? { capCutProject } : {}),
+    settings: normalizeGroupingSettings(project.settings),
+    skipState: normalizeSavedTimelineSkipState(project.skipState),
+  }
+}
+
 export const createSavedProject = (
   language: string,
   words: CaptionWord[],
   groups: CaptionGroup[],
   settings: GroupingSettings,
-  source?: Pick<SavedProject, 'audioFingerprint' | 'fileName' | 'fileSize'>,
+  source?: SavedProjectSource,
   skipState?: SavedTimelineSkipState,
 ): SavedProject => ({
   version: 1,
@@ -140,9 +220,27 @@ export const createSavedProject = (
 export const saveProject = (project: SavedProject) => {
   try {
     localStorage.setItem(projectStorageKey, JSON.stringify(project))
+    const sourceStorageKey = getProjectBySourceStorageKey(project)
+    if (sourceStorageKey) {
+      localStorage.setItem(sourceStorageKey, JSON.stringify(project))
+    }
     return true
   } catch {
     return false
+  }
+}
+
+export const loadProjectBySource = (source: SavedProjectSource): SavedProject | null => {
+  const sourceStorageKey = getProjectBySourceStorageKey(source)
+  if (!sourceStorageKey) return null
+
+  try {
+    const raw = localStorage.getItem(sourceStorageKey)
+    if (!raw) return null
+
+    return normalizeSavedProject(JSON.parse(raw) as SavedProject)
+  } catch {
+    return null
   }
 }
 
@@ -238,15 +336,7 @@ export const loadProject = (): SavedProject | null => {
     const raw = localStorage.getItem(projectStorageKey)
     if (!raw) return null
 
-    const project = JSON.parse(raw) as SavedProject
-    if (project.version !== 1 || !Array.isArray(project.words) || !Array.isArray(project.groups)) {
-      return null
-    }
-    return {
-      ...project,
-      settings: normalizeGroupingSettings(project.settings),
-      skipState: normalizeSavedTimelineSkipState(project.skipState),
-    }
+    return normalizeSavedProject(JSON.parse(raw) as SavedProject)
   } catch {
     return null
   }

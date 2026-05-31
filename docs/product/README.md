@@ -40,15 +40,17 @@ data that CapCut can ingest.
 
 ## Domain Concepts
 
-- Source media: uploaded audio or video file.
+- Source media: uploaded audio/video file or imported local CapCut project.
 - Audio fingerprint: local cache key derived from file bytes and file size.
+- CapCut project source: local draft identity derived from project path and
+  main timeline id.
 - Caption word: one recognized word with start/end timestamps.
 - Caption group: one subtitle block containing one or more caption words.
 - Grouping settings: deterministic rules used to rebuild groups from words.
 - Transcription cache: browser-local copy of transcription data for one
   fingerprint/language pair.
 - Saved project: browser-local editor state including words, groups, settings,
-  and source metadata.
+  skip zones, and source metadata.
 
 ## Architecture Notes
 
@@ -56,6 +58,7 @@ data that CapCut can ingest.
 - [Domain Model](domain-model.md)
 - [Runtime View](runtime-view.md)
 - [Workflows](workflows.md)
+- [Stable-ts Integration](../stable-ts-integration.md)
 - [Modules Catalog](../catalog/modules.md)
 - [UI Components Catalog](../catalog/ui-components.md)
 
@@ -66,8 +69,8 @@ The current environment is local-first:
 - Web app: React + Vite on `127.0.0.1:5173`.
 - API: FastAPI on `127.0.0.1:8787`.
 - Storage: browser `localStorage`.
-- Transcription provider: OpenAI audio transcription API through the local API
-  server only.
+- Transcription provider: `TRANSCRIPTION_PROVIDER=auto` uses local Stable-ts
+  first and OpenAI audio transcription as fallback through the local API server.
 
 ## Agent Notes
 

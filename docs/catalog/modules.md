@@ -12,7 +12,7 @@ integrations, tools, and other public non-UI surfaces.
 - Purpose: Shared TypeScript data contracts for words, groups, settings, and
   transcription responses.
 - Public API: `CaptionWord`, `CaptionGroup`, `GroupingSettings`,
-  `TranscriptionResult`.
+  `TranscriptionResult`, `AlignmentResult`.
 - Depends on: No app modules.
 - Used by: Caption domain, services, feature workbench, UI components.
 - Use when: A module needs typed caption data.
@@ -43,11 +43,12 @@ integrations, tools, and other public non-UI surfaces.
 - Type: domain module
 - Location: `apps/web/src/domain/captions`
 - Purpose: Own deterministic caption rules, timing normalization, grouping,
-  empty-zone calculations, SRT export, CapCut patch manifest generation, and
-  transcription ingest.
+  subtitle-only caption-gap detection, empty-zone calculations, SRT export,
+  CapCut patch manifest generation, and transcription ingest.
 - Public API: `groupWords`, `ingestTranscription`, `normalizeGroupTimings`,
-  `setGroupBoundary`, `rebuildGroupTiming`, `exportSrt`, `getEmptyZoneCuts`,
-  `buildCapCutPatchManifest`, `sanitizeCaptionWords`, grouping defaults.
+  `setGroupBoundary`, `getCaptionGaps`, `rebuildGroupTiming`, `exportSrt`,
+  `getEmptyZoneCuts`, `buildCapCutPatchManifest`, `sanitizeCaptionWords`,
+  `applyAlignedWordsToGroup`, grouping defaults.
 - Depends on: Caption contracts only.
 - Used by: Caption workbench feature, storage normalization, UI formatting.
 - Use when: Transforming caption words/groups or exporting captions.
@@ -67,6 +68,22 @@ integrations, tools, and other public non-UI surfaces.
 - Do not use for: Grouping words or mutating editor state.
 - Related: [Fresh Transcription workflow](../product/workflows.md#fresh-transcription).
 
+### Alignment Client
+
+- Type: integration service
+- Location: `apps/web/src/services/alignment/alignmentClient.ts`
+- Purpose: Browser-side client for local API MFA forced-alignment requests.
+- Public API: `alignFileSegment(file, language, start, end, text)`,
+  `AlignmentRequestError`, `isAlignmentServiceError`.
+- Depends on: Caption contracts, flow logger, shared API config.
+- Used by: Caption workbench feature.
+- Use when: Refining existing caption text against source audio.
+- Do not use for: Transcription, grouping, or mutating editor state directly.
+- Notes: The workbench currently calls this API with bounded concurrency and
+  applies results through the caption domain helper in caption order. Repeated
+  service errors stop large queues before every group emits the same failure.
+- Related: [MFA Alignment Integration](../mfa-alignment.md).
+
 ### CapCut Client
 
 - Type: browser integration service
@@ -75,7 +92,8 @@ integrations, tools, and other public non-UI surfaces.
   scanning, inspect, import, source preview, dry-run, and patch actions.
 - Public API: `listCapCutProjects`, `inspectCapCutProject`,
   `loadCapCutTimelineMap`, `importCapCutProject`,
-  `loadCapCutSourcePreview`, `dryRunCapCutPatch`, `patchCapCutProject`.
+  `loadCapCutStemFile`, `loadCapCutSourcePreview`, `dryRunCapCutPatch`,
+  `patchCapCutProject`.
 - Depends on: Shared API config, CapCut patch manifest contract, CapCut
   timeline contracts.
 - Used by: Caption workbench feature.
@@ -102,18 +120,40 @@ integrations, tools, and other public non-UI surfaces.
   patching draft files.
 - Related: [CapCut Cut Export Plan](../capcut-cut-export-plan.md).
 
+### MFA Alignment Backend
+
+- Type: backend integration service
+- Location: `apps/api/app/alignment.py`
+- Purpose: Run `mfa align_one` against a selected audio fragment and known text,
+  parse JSON output, and return editor-timeline word intervals.
+- Public API: `MfaAlignmentBackend`, `MfaOptions`, `align_audio_segment`.
+- Depends on: Local MFA CLI, shared audio processing helpers, temporary files.
+- Used by: `POST /api/align/segment`.
+- Use when: Tightening timestamps for already-known caption text.
+- Do not use for: Primary speech recognition, caption grouping, browser state,
+  or CapCut draft patching.
+- Notes: Each `align_one` call receives a request-scoped MFA temporary
+  directory and a request-local extracted acoustic model when a saved MFA model
+  zip exists, preventing parallel requests from cleaning or reading the same MFA
+  work folder. Large-project batch/corpus alignment is planned as a separate
+  backend endpoint so the UI can keep progress visible without overloading
+  local MFA.
+- Related: [MFA Alignment Integration](../mfa-alignment.md).
+
 ### Project Repository
 
 - Type: persistence service
 - Location: `apps/web/src/services/storage/projectRepository.ts`
-- Purpose: Own browser-local project autosave and transcription cache access.
-- Public API: `loadProject`, `saveProject`, `loadTranscriptionCache`,
-  `saveTranscriptionCache`, `getTranscriptionCacheMeta`, `createSavedProject`,
-  `SavedTimelineSkipState`.
+- Purpose: Own browser-local project autosave, source-keyed project restore,
+  serialized skip-zone restore, and transcription cache access.
+- Public API: `loadProject`, `loadProjectBySource`, `saveProject`,
+  `loadTranscriptionCache`, `saveTranscriptionCache`,
+  `getTranscriptionCacheMeta`, `getSavedProjectSourceKey`,
+  `createSavedProject`, `SavedProjectSource`, `SavedTimelineSkipState`.
 - Depends on: Caption contracts, caption settings normalization.
 - Used by: Caption workbench feature.
-- Use when: Reading or writing project/cache state, including serialized
-  skip-zone state.
+- Use when: Reading or writing project/cache state, including per-file or
+  per-CapCut-project editor snapshots and serialized skip-zone state.
 - Do not use for: Transcription API calls, grouping decisions, UI rendering, or
   activating saved transcript state before source media is selected.
 - Related: [Data Governance](../product/data-governance.md).
@@ -194,8 +234,11 @@ integrations, tools, and other public non-UI surfaces.
   editable manual/automatic empty-zone skip regions, non-destructive caption
   region masking, temporary range selection actions, empty-zone skip playback,
   overlapping skip-zone normalization, detected-silence tuning controls,
-  selected-region scroll alignment, skip-aware group loop ranges, and
-  keyboard-compatible audition commands.
+  selected-region scroll alignment, skip-aware group loop ranges, loop
+  invalidation when skip edits hide or split the active segment, and
+  keyboard-compatible audition commands. Synchronization is time-based rather
+  than raw-scroll-pixel-based, and normalized lanes share a decoded-audio
+  `maxPeak` so waveform height remains stable across zoom/redraw.
 - Public API: `useWaveSurferTimeline`.
 - Depends on: WaveSurfer.js, caption contracts, and caption domain
   formatting/empty-zone rules.
@@ -213,8 +256,12 @@ integrations, tools, and other public non-UI surfaces.
 - Location: `apps/web/src/features/caption-workbench/model/silenceDetection.ts`
 - Purpose: Extract audible regions from a WaveSurfer-decoded `AudioBuffer`,
   derive the silent gaps between them, and return editable skip-zone cuts that
-  can be widened or narrowed before confirmation.
-- Public API: `detectSilenceCuts`.
+  can be widened or narrowed before confirmation. Supports local loudness
+  normalization, RMS threshold, minimum duration, and speech-edge guard
+  settings. The minimum duration is enforced after boundary tuning as well as
+  during initial detection.
+- Public API: `detectSilenceCuts`, `defaultSilenceDetectionSettings`,
+  `normalizeSilenceDetectionSettings`.
 - Depends on: Browser Web Audio `AudioBuffer` and caption timing formatting.
 - Used by: WaveSurfer timeline model when the user asks the editor to detect
   silent zones from the waveform.
@@ -272,16 +319,22 @@ integrations, tools, and other public non-UI surfaces.
 
 - Type: integration service
 - Location: `apps/api/app/transcription.py`
-- Purpose: Own OpenAI transcription requests, long-media chunking, and
+- Purpose: Own provider-backed transcription requests, long-media chunking, and
   timestamp reassembly before the API route builds response payloads. Also owns
   ffmpeg-backed selected-segment extraction for partial and kept-chunk
-  retranscription.
-- Public API: `transcribe_audio(client, filename, audio_bytes, language)`,
-  `transcribe_audio_segment(client, filename, audio_bytes, language, start, end)`.
-- Depends on: OpenAI SDK, local `ffmpeg`/`ffprobe` when chunking long media.
+  retranscription. Provider adapters include OpenAI and Stable-ts behind a
+  shared `TranscriptionBackend` contract.
+- Public API: `TranscriptionBackend`, `OpenAiTranscriptionBackend`,
+  `StableTsTranscriptionBackend`, `FallbackTranscriptionBackend`,
+  `StableTsOptions`, `transcribe_audio(backend, filename, audio_bytes, language)`,
+  `transcribe_audio_segment(backend, filename, audio_bytes, language, start, end)`.
+- Depends on: OpenAI SDK, optional Stable-ts/PyTorch/Whisper runtime, local
+  `ffmpeg`/`ffprobe` when chunking long media.
 - Used by: API transcription route.
 - Use when: Server-side code needs provider transcription with word timestamps.
-- Do not use for: Caption grouping, browser cache, or UI state.
+- Do not use for: Caption grouping, browser cache, or UI state. Stable-ts
+  provider regrouping is intentionally disabled because grouping belongs to the
+  caption domain.
 - Related: [Fresh Transcription workflow](../product/workflows.md#fresh-transcription).
 
 ### API CapCut Draft Patcher
@@ -321,7 +374,8 @@ integrations, tools, and other public non-UI surfaces.
 
 - Type: integration adapter
 - Location: `apps/api/app/main.py`
-- Purpose: Keep OpenAI transcription integration and API key on the local server.
+- Purpose: Keep transcription provider integration and any remote API key on the
+  local server.
 - Public API: `POST /api/transcribe`, `POST /api/regroup`, `POST /api/export/srt`,
   `POST /api/transcribe/segment`, `POST /api/transcribe/segments`,
   `POST /api/capcut/inspect`, `POST /api/capcut/patch-dry-run`,

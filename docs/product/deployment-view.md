@@ -5,7 +5,7 @@
 | Environment | Purpose | Deployment | Notes |
 | --- | --- | --- | --- |
 | Local web | Editor UI | `npm run dev` in `apps/web` | Usually `127.0.0.1:5173`. |
-| Local API | Transcription adapter | `uvicorn app.main:app --reload --port 8787` in `apps/api` | Requires `OPENAI_API_KEY`. |
+| Local API | Transcription adapter | `uvicorn app.main:app --reload --port 8787` in `apps/api` | `TRANSCRIPTION_PROVIDER=auto` prefers local Stable-ts; `OPENAI_API_KEY` enables fallback or explicit OpenAI mode. |
 
 ## Future Deployment
 

@@ -40,13 +40,16 @@
 - Steps:
   1. Workbench ensures a fingerprint exists.
   2. Transcription client uploads the file to the local API.
-  3. API calls the transcription provider and returns word-level timestamps.
+  3. API calls the configured transcription provider. `auto` tries local
+     `stable-ts` first so Whisper timestamps are adjusted with silence
+     suppression/VAD, then falls back to OpenAI if local inference cannot run.
   4. Caption domain removes punctuation-only artifacts, ingests returned words,
      and rebuilds groups.
   5. Storage service overwrites the local transcription cache.
   6. Workbench writes words and groups into editor state.
 - Result: Editor shows freshly transcribed captions and cache is updated.
-- Failure states: API key missing, API down, provider error, invalid response.
+- Failure states: API down, local model unavailable, API key missing when
+  OpenAI is required, provider error, invalid response.
 - Related domain concepts: CaptionWord, CaptionGroup, TranscriptionCache.
 
 ### Retranscribe Kept Chunks
@@ -54,12 +57,15 @@
 - Actor: User.
 - Trigger: User clicks the kept-chunk transcription action after creating or
   detecting skip zones.
-- Preconditions: Source media is selected, API is running, and at least one
-  non-skipped timeline range exists.
+- Preconditions: Source media is selected or a CapCut project import has a
+  rendered audio stem, API is running, and at least one non-skipped timeline
+  range exists.
 - Steps:
   1. Timeline model exposes ranges left after active skip zones are subtracted.
   2. Workbench inserts temporary loading groups for every kept range.
-  3. Workbench sends selected-range requests through a bounded parallel pool.
+  3. Workbench uses the uploaded media file or downloads the imported CapCut
+     stem as a `File`, then sends selected-range requests through a bounded
+     parallel pool.
   4. Each completed range is sanitized and merged immediately into editor state
      while pending ranges remain visible as loading groups.
   5. Workbench disables transcript-derived trimming for this write so the
@@ -70,7 +76,31 @@
   transcription.
 - Failure states: API key missing, API down, no words detected, provider error,
   or too many concurrent provider requests for the current project limits.
+  Local `stable-ts` inference is serialized around the shared model instance;
+  OpenAI fallback still uses the server-side request pool.
 - Related domain concepts: CaptionWord, CaptionGroup, EmptyZoneCut.
+
+### Import CapCut Project
+
+- Actor: User.
+- Trigger: User clicks `Load CapCut` and imports a scanned or manually entered
+  local project path.
+- Preconditions: Local API can inspect/render the project and at least one
+  audible stem exists.
+- Steps:
+  1. CapCut client imports the project timeline map and rendered audio stems.
+  2. Workbench creates a stable source identity from project path and main
+     timeline id.
+  3. Storage service checks for a saved editor project under that source key.
+  4. If a saved project exists, workbench restores exact words, groups,
+     settings, language, and skip-zone state without transcription ingest.
+  5. If no saved project exists, workbench clears stale editor state and starts
+     an empty editor for that CapCut source.
+- Result: Reopening the same CapCut project restores the user's local caption
+  groups and skip-zone edits.
+- Failure states: Local agent/API unavailable, unsupported draft, no audible
+  stems, or unreadable saved project.
+- Related domain concepts: CapCutProjectSource, SavedProject, CaptionGroup.
 
 ### Regroup Captions
 
@@ -86,6 +116,30 @@
   do not change grouping boundaries.
 - Related domain concepts: GroupingSettings, CaptionWord, CaptionGroup.
 
+### Align Caption Timings
+
+- Actor: User.
+- Trigger: User clicks `Align selected`, `Align edited`, or `Align all`.
+- Preconditions: Source media is selected or a CapCut project import has a
+  rendered audio stem, API is running, MFA is installed locally, and at least
+  one visible caption group has known text.
+- Steps:
+  1. Workbench resolves the active media source.
+  2. Workbench sends each requested group as a padded audio segment plus known
+     caption text to `POST /api/align/segment`.
+  3. API prepares a temporary mono WAV fragment and text file.
+  4. MFA `align_one` aligns known text to the fragment and returns JSON output.
+  5. Caption domain applies returned word intervals to the existing group while
+     preserving group identity and text overrides.
+  6. Workbench clears dirty alignment state for successfully aligned groups and
+     project autosave persists the update.
+- Result: Caption groups keep their text and grouping but receive tighter word
+  and group timestamps.
+- Failure states: MFA CLI missing, dictionary/acoustic model missing, G2P model
+  missing for OOV words, no aligned words returned, API down, or source media
+  unavailable.
+- Related domain concepts: CaptionWord, CaptionGroup, ForcedAlignment.
+
 ### Edit Timing And Preview
 
 - Actor: User.
@@ -98,7 +152,9 @@
      needed.
   4. Workbench writes normalized groups into editor state.
 - Result: User hears timing changes immediately and project autosaves.
-- Failure states: No media loaded; selected group no longer exists after regroup.
+- Failure states: No media loaded; selected group no longer exists after
+  regroup; active loop is stopped if skip-zone edits, undo/redo, or regrouping
+  hide or split the looped caption segment.
 - Related domain concepts: CaptionGroup, SourceMedia.
 
 ### Export SRT

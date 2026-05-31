@@ -48,6 +48,7 @@ export const runWithConcurrency = async <Item>(
   items: Item[],
   concurrency: number,
   worker: (item: Item, index: number) => Promise<void>,
+  options: { shouldStop?: () => boolean } = {},
 ) => {
   const workerCount = Math.min(Math.max(1, concurrency), items.length)
   const errors: unknown[] = []
@@ -55,6 +56,8 @@ export const runWithConcurrency = async <Item>(
 
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (nextIndex < items.length) {
+      if (options.shouldStop?.()) break
+
       const index = nextIndex
       nextIndex += 1
       try {
