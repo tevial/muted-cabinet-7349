@@ -10,10 +10,13 @@ This feature contains:
   autosave, SRT export, and CapCut cut-manifest export.
 - `ui/CapCutProjectPatchDialog.tsx` - project patch dialog that consumes the
   optional local CapCut project scanner and falls back to manual project paths.
+- `ui/CapCutSourceCutPanel.tsx` - selected source-cut details and hidden
+  source-range audio preview for imported CapCut projects.
 - `model/useWaveSurferTimeline.ts` - WaveSurfer instances, official plugins,
   playback, precise segment loop, seek, caption regions, editable empty-zone
-  skip regions, temporary range selections, derived caption-region masking,
-  zoom, scroll sync, and timeline audition state.
+  skip regions, temporary range selections, CapCut source-cut selection,
+  derived caption-region masking, zoom, scroll sync, and timeline audition
+  state.
 - `model/waveSurferTimelineConfig.ts` - WaveSurfer visual options, zoom limits,
   timeline label formatting, and caption region colors.
 - `model/silenceDetection.ts` - local waveform silence detection using the
@@ -68,6 +71,11 @@ Rules:
   the CapCut service client. It may use the local agent's scanned project list
   when available, but manual project-path patching must continue to work when
   the scanner is disabled.
+- CapCut source-cut boundaries are selectable read/preview objects in this
+  stage. The timeline model owns hit testing and selected-boundary highlight;
+  the feature controller owns source-preview API calls; the screen renders the
+  preview panel. Restoring hidden source ranges remains a separate draft-write
+  workflow.
 - Transcription ingest must sanitize provider artifacts before grouping.
   Punctuation-only words, including standalone dash variants, are ignored in
   full transcription, selected-range transcription, cache load, and kept-chunk

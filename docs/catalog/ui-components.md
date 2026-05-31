@@ -64,6 +64,21 @@ patterns.
   or caption/skip-zone state transitions.
 - Related: [CapCut Cut Export Plan](../capcut-cut-export-plan.md).
 
+### CapCutSourceCutPanel
+
+- Layer: feature view
+- Location:
+  `apps/web/src/features/caption-workbench/ui/CapCutSourceCutPanel.tsx`
+- Purpose: Render the selected CapCut source-cut boundary details and an audio
+  preview of the hidden source range.
+- Public API: Selected `CapCutSourceCutBoundary`, optional
+  `CapCutSourcePreview`, loading/error state, close and preview callbacks.
+- Used by: Caption workbench screen.
+- Use when: The workbench needs to inspect a restore-capable source cut from an
+  imported CapCut project.
+- Do not use for: Timeline-map mutation, draft writes, or ffmpeg/API calls.
+- Related: [CapCut Cut Export Plan](../capcut-cut-export-plan.md).
+
 ### TopBar
 
 - Layer: pattern

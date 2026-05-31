@@ -124,8 +124,9 @@ Implemented foundation:
 - Browser CapCut import/source-preview client contracts.
 - Workbench import dialog with Local Agent project picker fallback to manual
   project path.
-- Read-only project-gap/source-cut/marker overlays on the existing WaveSurfer
-  timeline.
+- Read-only project-gap/marker overlays on the existing WaveSurfer timeline.
+- Selectable source-cut boundary overlays with hidden-range detail and preview
+  playback in the workbench.
 - Read-only `wavesurfer-multitrack` preview for imports that return multiple
   stems.
 
@@ -142,7 +143,8 @@ Remaining work:
 
 - Replace the single-stem compatibility playback path with a full multitrack
   timeline adapter while preserving caption Regions and skip-zone editing.
-- Add the source-cut restore/hide editor flow that mutates the timeline map.
+- Add the source-cut restore/hide editor flow that mutates the timeline map and
+  rewrites the CapCut draft.
 - Validate imports against a fixture with truly separate overlapping media
   tracks. The current `0531` sample still renders as one audible media stem.
 

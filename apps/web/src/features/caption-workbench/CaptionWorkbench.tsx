@@ -40,13 +40,14 @@ import {
   dryRunCapCutPatch,
   importCapCutProject,
   listCapCutProjects,
+  loadCapCutSourcePreview,
   patchCapCutProject,
   type CapCutLocalAgentStatus,
   type CapCutPatchSummary,
   type CapCutProjectSummary,
 } from '../../services/capcut/capcutClient'
 import type { CaptionGroup, CaptionWord, GroupingSettings } from '../../contracts/captions'
-import type { CapCutProjectImport } from '../../contracts/capcut'
+import type { CapCutProjectImport, CapCutSourcePreview } from '../../contracts/capcut'
 import {
   cloneTimelineSkipState,
   createTimelineSkipState,
@@ -256,6 +257,12 @@ export function CaptionWorkbench() {
   const [capCutProjectPath, setCapCutProjectPath] = useState('')
   const [capCutPatchSummary, setCapCutPatchSummary] = useState<CapCutPatchSummary | undefined>()
   const [capCutProjectImport, setCapCutProjectImport] = useState<CapCutProjectImport | undefined>()
+  const [selectedCapCutSourceCutBoundaryId, setSelectedCapCutSourceCutBoundaryId] = useState<string | undefined>()
+  const [capCutSourcePreview, setCapCutSourcePreview] = useState<
+    { boundaryId: string; preview: CapCutSourcePreview } | undefined
+  >()
+  const [isCapCutSourcePreviewLoading, setIsCapCutSourcePreviewLoading] = useState(false)
+  const [capCutSourcePreviewError, setCapCutSourcePreviewError] = useState<string | undefined>()
   const [capCutPatchError, setCapCutPatchError] = useState<string | undefined>()
   const autosaveLogKeyRef = useRef<string | undefined>(undefined)
   const historySignatureRef = useRef<string | undefined>(undefined)
@@ -410,6 +417,10 @@ export function CaptionWorkbench() {
     groupMutationSourceRef.current = 'group timing edit'
     setGroups((current) => setGroupBoundary(current, groupId, start, end))
   }, [commitHistory])
+  const handleCapCutSourceCutSelect = useCallback((boundaryId: string) => {
+    setSelectedCapCutSourceCutBoundaryId(boundaryId)
+    setCapCutSourcePreviewError(undefined)
+  }, [])
   const {
     addSkipRegion,
     captionContainerRef,
@@ -440,16 +451,57 @@ export function CaptionWorkbench() {
     contentDuration: totalDuration,
     groups,
     selectedGroupId,
+    selectedCapCutSourceCutBoundaryId,
     skipState,
     setSkipState,
     setSelectedGroupId,
     setStatus,
     settings,
     words,
+    onCapCutSourceCutSelect: handleCapCutSourceCutSelect,
     onHistoryCommit: commitHistory,
     onGroupTimingChange: updateGroupTiming,
     onTranscribeRange: handleTranscribeRange,
   })
+  const selectedCapCutSourceCutBoundary = useMemo(
+    () =>
+      capCutProjectImport?.timelineMap.sourceCutBoundaries.find(
+        (boundary) => boundary.id === selectedCapCutSourceCutBoundaryId,
+      ),
+    [capCutProjectImport, selectedCapCutSourceCutBoundaryId],
+  )
+  const selectedCapCutSourcePreview =
+    capCutSourcePreview && selectedCapCutSourceCutBoundary &&
+    capCutSourcePreview.boundaryId === selectedCapCutSourceCutBoundary.id
+      ? capCutSourcePreview.preview
+      : undefined
+  const closeCapCutSourceCutPanel = useCallback(() => {
+    setSelectedCapCutSourceCutBoundaryId(undefined)
+    setCapCutSourcePreviewError(undefined)
+    setIsCapCutSourcePreviewLoading(false)
+  }, [])
+  const loadSelectedCapCutSourcePreview = useCallback(async () => {
+    const boundary = selectedCapCutSourceCutBoundary
+    if (!boundary) return
+
+    stopPlayback()
+    setIsCapCutSourcePreviewLoading(true)
+    setCapCutSourcePreviewError(undefined)
+    try {
+      const preview = await loadCapCutSourcePreview(
+        boundary.mediaPath,
+        boundary.hiddenSourceStart,
+        boundary.hiddenSourceEnd,
+      )
+      setCapCutSourcePreview({ boundaryId: boundary.id, preview })
+      setStatus(`Rendered hidden source preview (${preview.duration.toFixed(2)}s).`)
+    } catch (error) {
+      setCapCutSourcePreviewError(error instanceof Error ? error.message : 'CapCut source preview failed.')
+    } finally {
+      setIsCapCutSourcePreviewLoading(false)
+    }
+  }, [selectedCapCutSourceCutBoundary, stopPlayback])
+
   const transcribableKeptRanges = useMemo(
     () => keptTimelineRanges.filter((range) => range.end - range.start >= minChunkTranscriptionDuration),
     [keptTimelineRanges],
@@ -677,6 +729,9 @@ export function CaptionWorkbench() {
         fileName: result.timelineMap.projectPath.split('/').at(-1) ?? 'CapCut project',
         fileSize: 0,
       })
+      setSelectedCapCutSourceCutBoundaryId(undefined)
+      setCapCutSourcePreview(undefined)
+      setCapCutSourcePreviewError(undefined)
       setSkipState(createTimelineSkipState(firstStem.url))
       setIsCapCutImportOpen(false)
       setStatus(
@@ -1481,10 +1536,14 @@ export function CaptionWorkbench() {
       capCutProjectImport={capCutProjectImport}
       capCutProjectPath={capCutProjectPath}
       capCutProjects={capCutProjects}
+      capCutSourceCutBoundary={selectedCapCutSourceCutBoundary}
+      capCutSourcePreview={selectedCapCutSourcePreview}
+      capCutSourcePreviewError={capCutSourcePreviewError}
       isCapCutImportBusy={isCapCutImportBusy}
       isCapCutImportOpen={isCapCutImportOpen}
       isCapCutPatchBusy={isCapCutPatchBusy}
       isCapCutPatchOpen={isCapCutPatchOpen}
+      isCapCutSourcePreviewLoading={isCapCutSourcePreviewLoading}
       isLoadingCapCutProjects={isLoadingCapCutProjects}
       onFileChange={handleFileChange}
       onLoadCachedTranscript={handleLoadCachedTranscript}
@@ -1498,6 +1557,8 @@ export function CaptionWorkbench() {
       onCapCutImportClose={() => setIsCapCutImportOpen(false)}
       onCapCutImportOpen={openCapCutImportDialog}
       onCapCutImportRun={runCapCutImport}
+      onCapCutSourceCutClose={closeCapCutSourceCutPanel}
+      onCapCutSourcePreviewLoad={loadSelectedCapCutSourcePreview}
       onCapCutPatchClose={() => setIsCapCutPatchOpen(false)}
       onCapCutPatchDryRun={runCapCutPatchDryRun}
       onCapCutPatchOpen={openCapCutPatchDialog}

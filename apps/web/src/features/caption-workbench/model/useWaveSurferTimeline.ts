@@ -74,7 +74,9 @@ type UseWaveSurferTimelineOptions = {
   setSelectedGroupId: Dispatch<SetStateAction<string | undefined>>
   setStatus: (message: string) => void
   settings: GroupingSettings
+  selectedCapCutSourceCutBoundaryId?: string
   words: CaptionWord[]
+  onCapCutSourceCutSelect?: (boundaryId: string) => void
   onHistoryCommit: (source: string) => void
   onGroupTimingChange: (groupId: string, start: number, end: number) => void
   onTranscribeRange?: (start: number, end: number) => Promise<void>
@@ -92,7 +94,7 @@ const capCutProjectGapPrefix = 'capcut_project_gap_'
 const capCutSourceCutPrefix = 'capcut_source_cut_'
 const capCutMarkerPrefix = 'capcut_marker_'
 const minDraftSelectionDuration = 0.1
-const capCutBoundaryDuration = 0.04
+const capCutBoundaryDuration = 0.12
 const silenceAdjustmentMin = -0.45
 const silenceAdjustmentMax = 0.45
 const silenceAdjustmentStep = 0.01
@@ -472,7 +474,9 @@ export const useWaveSurferTimeline = ({
   setSelectedGroupId,
   setStatus,
   settings,
+  selectedCapCutSourceCutBoundaryId,
   words,
+  onCapCutSourceCutSelect,
   onHistoryCommit,
   onGroupTimingChange,
   onTranscribeRange,
@@ -501,6 +505,7 @@ export const useWaveSurferTimeline = ({
   const onGroupTimingChangeRef = useLatestRef(onGroupTimingChange)
   const onHistoryCommitRef = useLatestRef(onHistoryCommit)
   const onTranscribeRangeRef = useLatestRef(onTranscribeRange)
+  const onCapCutSourceCutSelectRef = useLatestRef(onCapCutSourceCutSelect)
   const setStatusRef = useLatestRef(setStatus)
   const [audioDuration, setAudioDuration] = useState(0)
   const [playheadTime, setPlayheadTime] = useState(0)
@@ -1367,6 +1372,18 @@ export const useWaveSurferTimeline = ({
         setSelectedSkipRegionId(region.id)
         setStatusRef.current('Skip zone selected. Drag, resize, or delete it.')
       }),
+      capCutRegionsPlugin.on('region-clicked', (region, event) => {
+        event.stopPropagation()
+        const sourceCutId = region.id.startsWith(capCutSourceCutPrefix)
+          ? region.id.slice(capCutSourceCutPrefix.length)
+          : undefined
+        if (!sourceCutId) return
+
+        setSelectedGroupId(undefined)
+        setSelectedSkipRegionId(undefined)
+        onCapCutSourceCutSelectRef.current?.(sourceCutId)
+        setStatusRef.current('CapCut source cut selected.')
+      }),
       skipRegionsPlugin.on('region-updated', (region) => {
         if (isReconcilingSkipRegionsRef.current) return
 
@@ -1542,6 +1559,7 @@ export const useWaveSurferTimeline = ({
     emptyZoneSignatureRef,
     handleTimelineGroupSelectRef,
     maskedEmptyZoneCutsRef,
+    onCapCutSourceCutSelectRef,
     onGroupTimingChangeRef,
     onHistoryCommitRef,
     reconcileOverlappingSkipCuts,
@@ -1680,16 +1698,17 @@ export const useWaveSurferTimeline = ({
     capCutTimelineMap.sourceCutBoundaries.forEach((boundary) => {
       const start = clamp(boundary.projectPosition - capCutBoundaryDuration / 2, 0, duration)
       const end = clamp(boundary.projectPosition + capCutBoundaryDuration / 2, start + 0.001, duration)
+      const isSelected = boundary.id === selectedCapCutSourceCutBoundaryId
       capCutRegionsPlugin.addRegion({
         id: `${capCutSourceCutPrefix}${boundary.id}`,
         start,
         end,
-        color: 'rgba(111, 75, 190, 0.24)',
+        color: isSelected ? 'rgba(111, 75, 190, 0.42)' : 'rgba(111, 75, 190, 0.24)',
         content: getCapCutRegionContent(
-          '',
+          isSelected ? 'Cut' : '',
           `CapCut source cut: hidden ${formatSeconds(boundary.hiddenSourceStart)} - ${formatSeconds(boundary.hiddenSourceEnd)}`,
-          '#4c367c',
-          'rgba(111, 75, 190, 0.28)',
+          isSelected ? '#372468' : '#4c367c',
+          isSelected ? 'rgba(111, 75, 190, 0.42)' : 'rgba(111, 75, 190, 0.28)',
         ),
         drag: false,
         resize: false,
@@ -1717,7 +1736,7 @@ export const useWaveSurferTimeline = ({
         resize: false,
       })
     })
-  }, [capCutTimelineMap, skipRegionsReadyToken, timelineDuration])
+  }, [capCutTimelineMap, selectedCapCutSourceCutBoundaryId, skipRegionsReadyToken, timelineDuration])
 
   useEffect(() => {
     const draftRegionsPlugin = draftRegionsPluginRef.current

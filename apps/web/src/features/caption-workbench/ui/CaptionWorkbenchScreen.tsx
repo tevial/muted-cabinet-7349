@@ -12,9 +12,10 @@ import type {
   CapCutPatchSummary,
   CapCutProjectSummary,
 } from '../../../services/capcut/capcutClient'
-import type { CapCutProjectImport } from '../../../contracts/capcut'
+import type { CapCutProjectImport, CapCutSourceCutBoundary, CapCutSourcePreview } from '../../../contracts/capcut'
 import { CapCutProjectImportDialog } from './CapCutProjectImportDialog'
 import { CapCutProjectPatchDialog } from './CapCutProjectPatchDialog'
+import { CapCutSourceCutPanel } from './CapCutSourceCutPanel'
 
 type CaptionWorkbenchScreenProps = {
   capCutAgent?: CapCutLocalAgentStatus
@@ -23,6 +24,9 @@ type CaptionWorkbenchScreenProps = {
   capCutProjectImport?: CapCutProjectImport
   capCutProjectPath: string
   capCutProjects: CapCutProjectSummary[]
+  capCutSourceCutBoundary?: CapCutSourceCutBoundary
+  capCutSourcePreview?: CapCutSourcePreview
+  capCutSourcePreviewError?: string
   groups: CaptionGroup[]
   totalGroups: number
   selectedGroupId?: string
@@ -33,6 +37,7 @@ type CaptionWorkbenchScreenProps = {
   isCapCutPatchOpen: boolean
   isCapCutImportBusy: boolean
   isCapCutImportOpen: boolean
+  isCapCutSourcePreviewLoading: boolean
   isLoadingCapCutProjects: boolean
   canRedo: boolean
   canExportCutManifest: boolean
@@ -75,6 +80,8 @@ type CaptionWorkbenchScreenProps = {
   onCapCutImportClose: () => void
   onCapCutImportOpen: () => void
   onCapCutImportRun: () => void
+  onCapCutSourceCutClose: () => void
+  onCapCutSourcePreviewLoad: () => void
   onCapCutPatchClose: () => void
   onCapCutPatchDryRun: () => void
   onCapCutPatchOpen: () => void
@@ -108,6 +115,9 @@ export function CaptionWorkbenchScreen({
   capCutProjectImport,
   capCutProjectPath,
   capCutProjects,
+  capCutSourceCutBoundary,
+  capCutSourcePreview,
+  capCutSourcePreviewError,
   groups,
   totalGroups,
   selectedGroupId,
@@ -118,6 +128,7 @@ export function CaptionWorkbenchScreen({
   isCapCutPatchOpen,
   isCapCutImportBusy,
   isCapCutImportOpen,
+  isCapCutSourcePreviewLoading,
   isLoadingCapCutProjects,
   canRedo,
   canExportCutManifest,
@@ -152,6 +163,8 @@ export function CaptionWorkbenchScreen({
   onCapCutImportClose,
   onCapCutImportOpen,
   onCapCutImportRun,
+  onCapCutSourceCutClose,
+  onCapCutSourcePreviewLoad,
   onCapCutPatchClose,
   onCapCutPatchDryRun,
   onCapCutPatchOpen,
@@ -335,6 +348,14 @@ export function CaptionWorkbenchScreen({
                 <span>{capCutProjectImport.timelineMap.markers.length} markers</span>
               </section>
             ) : null}
+            <CapCutSourceCutPanel
+              boundary={capCutSourceCutBoundary}
+              error={capCutSourcePreviewError}
+              isLoadingPreview={isCapCutSourcePreviewLoading}
+              preview={capCutSourcePreview}
+              onClose={onCapCutSourceCutClose}
+              onLoadPreview={onCapCutSourcePreviewLoad}
+            />
             {capCutProjectImport ? (
               <CapCutMultitrackPreview stems={capCutProjectImport.stems} zoomLevel={zoomLevel} />
             ) : null}
