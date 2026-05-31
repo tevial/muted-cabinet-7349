@@ -25,6 +25,11 @@ for `CapCut Caption`.
 - [UI Component Taxonomy](ui-component-taxonomy.md) - atomic UI composition.
 - [Documentation Policy](documentation-policy.md) - docs, catalogs, local README,
   Storybook, and TSDoc rules.
+- [WaveSurfer Refactor Plan](wavesurfer-refactor-plan.md) - documentation audit
+  and refactor plan for replacing custom timeline behavior with WaveSurfer
+  plugins.
+- [CapCut Cut Export Plan](capcut-cut-export-plan.md) - staged plan for moving
+  from SRT-only export to safe CapCut draft rewrites driven by skip zones.
 
 ## Catalogs
 

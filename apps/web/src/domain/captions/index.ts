@@ -4,6 +4,7 @@ export type {
   GroupingSettings,
   TranscriptionResult,
 } from '../../contracts/captions'
+export * from './capcutManifest'
 export * from './emptyZones'
 export * from './exportSrt'
 export * from './formatting'

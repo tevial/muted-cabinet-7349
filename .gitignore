@@ -8,3 +8,6 @@ __pycache__
 uploads
 exports
 tmp
+apps/api/.cache
+test-audio.mp3
+transcribe-debug-output.txt

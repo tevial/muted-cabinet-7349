@@ -8,6 +8,7 @@ Use this module for:
 - Grouping words into caption blocks.
 - Normalizing group timings and adjacent boundaries.
 - Empty-zone calculations.
+- CapCut patch manifest generation for direct draft rewrite tooling.
 - SRT formatting/export.
 - Ingesting transcription responses into editor-ready words/groups.
 

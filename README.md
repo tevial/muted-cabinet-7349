@@ -13,6 +13,11 @@ CapCut Caption is a local caption-editing tool for short-form videos. It keeps w
 - `apps/web/src/features/caption-workbench` - main editor workflow.
 - `docs` - architecture rules, product context, and module/UI catalogs.
 
+CapCut project loading is split into a structural `CapCutTimelineMap` and
+derived audio stems. The map preserves tracks, source/target timing, markers,
+project gaps, and source-cut boundaries; stems are regenerated with `ffmpeg`
+for playback and waveform rendering.
+
 ## MVP Flow
 
 1. Upload audio or video in the web app.
@@ -41,6 +46,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 OPENAI_API_KEY=... uvicorn app.main:app --reload --port 8787
 ```
+
+Install `ffmpeg`/`ffprobe` locally for long media transcription chunking.
+Set `VITE_TRANSCRIBE_CHUNK_CONCURRENCY` for the web kept-chunk transcription
+pool, and `MAX_PARALLEL_SEGMENT_TRANSCRIPTIONS` for the API batch endpoint, if
+your OpenAI project limits allow more parallel requests.
 
 ## API Debugging
 

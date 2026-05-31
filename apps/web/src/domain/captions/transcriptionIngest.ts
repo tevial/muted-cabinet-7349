@@ -6,16 +6,25 @@ export type CaptionIngestResult = {
   sourceGroups: number
 }
 
+const meaningfulCaptionTextPattern = /[\p{L}\p{N}]/u
+
+export const isMeaningfulCaptionWord = (text: string) => meaningfulCaptionTextPattern.test(text.trim())
+
+export const sanitizeCaptionWords = (words: TranscriptionResult['words']) =>
+  words.filter((word) => isMeaningfulCaptionWord(word.text))
+
 export const ingestTranscription = (
   result: TranscriptionResult,
   settings: GroupingSettings,
 ): CaptionIngestResult => {
-  const groups = groupWords(result.words, settings)
+  const words = sanitizeCaptionWords(result.words)
+  const groups = groupWords(words, settings)
 
   return {
     result: {
       ...result,
-      text: result.words.map((word) => word.text).join(' '),
+      text: words.map((word) => word.text).join(' '),
+      words,
       groups,
     },
     sourceGroups: result.groups.length,

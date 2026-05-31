@@ -1,8 +1,8 @@
 import type { CaptionGroup, CaptionWord, GroupingSettings, TranscriptionResult } from '../../contracts/captions'
-import { normalizeGroupingSettings } from '../../domain/captions'
+import { normalizeGroupingSettings, type EmptyZoneCut } from '../../domain/captions'
 
 export const projectStorageKey = 'capcut-caption-project-v1'
-const transcriptionCachePrefix = 'capcut-caption-transcription-v1'
+const transcriptionCachePrefix = 'capcut-caption-transcription-v2'
 
 export type SavedProject = {
   version: 1
@@ -14,6 +14,20 @@ export type SavedProject = {
   words: CaptionWord[]
   groups: CaptionGroup[]
   settings: GroupingSettings
+  skipState?: SavedTimelineSkipState
+}
+
+export type SavedTimelineSkipStateEdit = {
+  id: string
+  start: number
+  end: number
+}
+
+export type SavedTimelineSkipState = {
+  deletedAutoIds: string[]
+  edits: SavedTimelineSkipStateEdit[]
+  manualCuts: EmptyZoneCut[]
+  signature: string
 }
 
 export type CachedTranscription = {
@@ -44,12 +58,74 @@ const getStoredTranscriptCounts = (value: unknown) => {
   }
 }
 
+const getFiniteNumber = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const normalizeSavedCut = (value: unknown): EmptyZoneCut | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<EmptyZoneCut>
+  const start = getFiniteNumber(candidate.start)
+  const end = getFiniteNumber(candidate.end)
+  if (typeof candidate.id !== 'string' || start === undefined || end === undefined || end <= start) return undefined
+
+  return {
+    id: candidate.id,
+    start,
+    end,
+    duration: getFiniteNumber(candidate.duration) ?? end - start,
+  }
+}
+
+const normalizeSavedEdit = (value: unknown): SavedTimelineSkipStateEdit | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<SavedTimelineSkipStateEdit>
+  const start = getFiniteNumber(candidate.start)
+  const end = getFiniteNumber(candidate.end)
+  if (typeof candidate.id !== 'string' || start === undefined || end === undefined || end <= start) return undefined
+
+  return { id: candidate.id, start, end }
+}
+
+const normalizeSavedTimelineSkipState = (value: unknown): SavedTimelineSkipState | undefined => {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<SavedTimelineSkipState>
+  const deletedAutoIds = Array.isArray(candidate.deletedAutoIds)
+    ? candidate.deletedAutoIds.filter((id): id is string => typeof id === 'string')
+    : []
+  const edits = Array.isArray(candidate.edits)
+    ? candidate.edits.flatMap((item) => {
+        const edit = normalizeSavedEdit(item)
+        return edit ? [edit] : []
+      })
+    : []
+  const manualCuts = Array.isArray(candidate.manualCuts)
+    ? candidate.manualCuts.flatMap((item) => {
+        const cut = normalizeSavedCut(item)
+        return cut ? [cut] : []
+      })
+    : []
+  const signature = typeof candidate.signature === 'string' ? candidate.signature : ''
+
+  if (!deletedAutoIds.length && !edits.length && !manualCuts.length && !signature) return undefined
+
+  return {
+    deletedAutoIds,
+    edits,
+    manualCuts,
+    signature,
+  }
+}
+
 export const createSavedProject = (
   language: string,
   words: CaptionWord[],
   groups: CaptionGroup[],
   settings: GroupingSettings,
   source?: Pick<SavedProject, 'audioFingerprint' | 'fileName' | 'fileSize'>,
+  skipState?: SavedTimelineSkipState,
 ): SavedProject => ({
   version: 1,
   savedAt: new Date().toISOString(),
@@ -58,6 +134,7 @@ export const createSavedProject = (
   words,
   groups,
   settings,
+  ...(skipState ? { skipState } : {}),
 })
 
 export const saveProject = (project: SavedProject) => {
@@ -168,6 +245,7 @@ export const loadProject = (): SavedProject | null => {
     return {
       ...project,
       settings: normalizeGroupingSettings(project.settings),
+      skipState: normalizeSavedTimelineSkipState(project.skipState),
     }
   } catch {
     return null

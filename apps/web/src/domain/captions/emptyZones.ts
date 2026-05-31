@@ -35,12 +35,10 @@ export const getEmptyZoneCuts = (
     })
   }
 
-  addCut(0, sortedWords[0].start)
   sortedWords.forEach((word, index) => {
     const nextWord = sortedWords[index + 1]
     if (nextWord) addCut(word.end, nextWord.start)
   })
-  addCut(sortedWords[sortedWords.length - 1].end, safeDuration)
 
   return cuts
 }

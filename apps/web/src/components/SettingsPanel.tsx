@@ -117,7 +117,7 @@ export function SettingsPanel({ language, stats, settings, onLanguageChange, onC
       </label>
 
       <div className="callout">
-        Empty zones use word timestamps. They can become CapCut cuts once exported into a draft rewrite.
+        Word-timestamp gaps are legacy suggestions. Use waveform-detected skip zones for controlled CapCut cuts.
       </div>
     </aside>
   )

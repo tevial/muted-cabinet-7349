@@ -1,7 +1,11 @@
 import type { TranscriptionResult } from '../../contracts/captions'
 import { flowLog, flowWarn, summarizeFile } from '../../shared/observability/flowLogger'
+import { apiBase } from '../api/apiConfig'
 
-const apiBase = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787'
+export type TranscriptionSegmentRange = {
+  end: number
+  start: number
+}
 
 export const transcribeFile = async (file: File, language: string) => {
   const body = new FormData()
@@ -30,6 +34,95 @@ export const transcribeFile = async (file: File, language: string) => {
 
   const result = (await response.json()) as TranscriptionResult
   flowLog('api: transcribe ok', {
+    status: response.status,
+    words: result.words.length,
+    groups: result.groups.length,
+  })
+  return result
+}
+
+export const transcribeFileSegment = async (
+  file: File,
+  language: string,
+  start: number,
+  end: number,
+) => {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('start', start.toFixed(3))
+  body.append('end', end.toFixed(3))
+  if (language.trim()) body.append('language', language.trim())
+
+  flowLog('api: POST /api/transcribe/segment', {
+    baseUrl: apiBase,
+    end,
+    file: summarizeFile(file),
+    language: language.trim() || 'auto',
+    start,
+  })
+
+  const response = await fetch(`${apiBase}/api/transcribe/segment`, {
+    method: 'POST',
+    body,
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    flowWarn('api: segment transcribe error', {
+      status: response.status,
+      message: message || 'Segment transcription failed.',
+    })
+    throw new Error(message || 'Segment transcription failed.')
+  }
+
+  const result = (await response.json()) as TranscriptionResult
+  flowLog('api: segment transcribe ok', {
+    end,
+    start,
+    status: response.status,
+    words: result.words.length,
+    groups: result.groups.length,
+  })
+  return result
+}
+
+export const transcribeFileSegments = async (
+  file: File,
+  language: string,
+  ranges: TranscriptionSegmentRange[],
+) => {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('ranges', JSON.stringify(ranges.map((range) => ({
+    start: Number(range.start.toFixed(3)),
+    end: Number(range.end.toFixed(3)),
+  }))))
+  if (language.trim()) body.append('language', language.trim())
+
+  flowLog('api: POST /api/transcribe/segments', {
+    baseUrl: apiBase,
+    file: summarizeFile(file),
+    language: language.trim() || 'auto',
+    ranges: ranges.length,
+  })
+
+  const response = await fetch(`${apiBase}/api/transcribe/segments`, {
+    method: 'POST',
+    body,
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    flowWarn('api: segments transcribe error', {
+      status: response.status,
+      message: message || 'Segment batch transcription failed.',
+    })
+    throw new Error(message || 'Segment batch transcription failed.')
+  }
+
+  const result = (await response.json()) as TranscriptionResult
+  flowLog('api: segments transcribe ok', {
+    ranges: ranges.length,
     status: response.status,
     words: result.words.length,
     groups: result.groups.length,

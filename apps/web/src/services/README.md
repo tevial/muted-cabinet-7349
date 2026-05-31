@@ -8,5 +8,9 @@ not own caption grouping rules or render UI.
 Current services:
 
 - `audio/audioFingerprint.ts` - source media cache fingerprint.
-- `storage/projectRepository.ts` - local project and transcription cache.
+- `api/apiConfig.ts` - shared local API base URL.
+- `capcut/capcutClient.ts` - local API CapCut project scan, inspect, import,
+  source-preview, dry-run, and patch requests.
+- `storage/projectRepository.ts` - local project, serialized skip-zone state,
+  and transcription cache.
 - `transcription/transcriptionClient.ts` - local API transcription request.

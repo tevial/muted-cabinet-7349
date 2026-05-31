@@ -36,7 +36,7 @@ flowchart TD
 
 | Integration | Direction | Purpose | Notes |
 | --- | --- | --- | --- |
-| OpenAI transcription | API server outbound | Get word-level transcript | Current model is `whisper-1` |
+| OpenAI transcription | API server outbound | Get word-level transcript | Current model is `whisper-1`; long media is chunked server-side before provider calls |
 | Browser localStorage | Web app local | Cache transcript/project | Keyed by fingerprint/language |
 | Browser File API | Web app local | Upload/play source media | Object URL is revoked on change |
 | Browser download | Web app local | Export SRT | No server roundtrip |

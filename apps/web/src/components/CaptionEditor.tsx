@@ -1,16 +1,17 @@
-import { ChevronLeft, ChevronRight, Combine, Play, Scissors, StepForward } from 'lucide-react'
+import { useEffect, useRef, type MouseEvent } from 'react'
+import { Combine, Play, Scissors } from 'lucide-react'
 
-import type { CaptionGroup, CaptionWord } from '../types'
-import { formatSeconds } from '../lib/captioning'
+import type { CaptionGroup } from '../types'
 
 type CaptionEditorProps = {
   groups: CaptionGroup[]
-  words: CaptionWord[]
   selectedGroupId?: string
+  totalGroups?: number
   onSelect: (groupId: string) => void
   onTextChange: (groupId: string, text: string) => void
   onTimingChange: (groupId: string, start: number, end: number) => void
-  onNudgeTiming: (groupId: string, offset: number) => void
+  onSplitAtCursor: (groupId: string, cursorIndex: number) => boolean
+  onMergePrevious: (groupId: string) => boolean
   onPlayGroup: (groupId: string) => void
   onSplit: (groupId: string) => void
   onMergeNext: (groupId: string) => void
@@ -19,18 +20,51 @@ type CaptionEditorProps = {
 
 export function CaptionEditor({
   groups,
-  words,
   selectedGroupId,
+  totalGroups,
   onSelect,
   onTextChange,
   onTimingChange,
-  onNudgeTiming,
+  onSplitAtCursor,
+  onMergePrevious,
   onPlayGroup,
   onSplit,
   onMergeNext,
   timingNudgeStep,
 }: CaptionEditorProps) {
-  const wordMap = new Map(words.map((word) => [word.id, word]))
+  const rowRefs = useRef(new Map<string, HTMLElement>())
+  const textInputRefs = useRef(new Map<string, HTMLInputElement>())
+  const pendingTextFocusRef = useRef<'start' | 'end' | undefined>(undefined)
+  const runRowAction = (event: MouseEvent<HTMLButtonElement>, action: () => void) => {
+    event.stopPropagation()
+    action()
+  }
+  const groupCountLabel =
+    totalGroups !== undefined && totalGroups !== groups.length
+      ? `${groups.length} visible`
+      : `${groups.length} groups`
+
+  useEffect(() => {
+    const focusPosition = pendingTextFocusRef.current
+    if (!focusPosition || !selectedGroupId) return
+
+    const input = textInputRefs.current.get(selectedGroupId)
+    if (!input) return
+
+    pendingTextFocusRef.current = undefined
+    const cursorPosition = focusPosition === 'start' ? 0 : input.value.length
+    input.focus()
+    input.setSelectionRange(cursorPosition, cursorPosition)
+  }, [groups, selectedGroupId])
+
+  useEffect(() => {
+    if (!selectedGroupId || pendingTextFocusRef.current) return
+
+    rowRefs.current.get(selectedGroupId)?.scrollIntoView({
+      block: 'nearest',
+      behavior: 'smooth',
+    })
+  }, [selectedGroupId])
 
   return (
     <section className="editor-panel">
@@ -39,85 +73,100 @@ export function CaptionEditor({
           <p className="panel-kicker">Blocks</p>
           <h2>Caption groups</h2>
         </div>
-        <span>{groups.length} groups</span>
+        <span>{groupCountLabel}</span>
       </div>
 
       <div className="group-list">
         {groups.map((group) => {
-          const groupWords = group.wordIds.map((id) => wordMap.get(id)).filter(Boolean) as CaptionWord[]
           const isSelected = group.id === selectedGroupId
+          const textValue = group.textOverride ?? group.text
+          const isPending = group.wordIds.length === 0 && textValue === 'Transcribing...'
 
           return (
             <article
               key={group.id}
-              className={`caption-row ${isSelected ? 'selected' : ''}`}
+              ref={(node) => {
+                if (node) {
+                  rowRefs.current.set(group.id, node)
+                  return
+                }
+
+                rowRefs.current.delete(group.id)
+              }}
+              className={`caption-row ${isSelected ? 'selected' : ''} ${isPending ? 'pending' : ''}`}
               onClick={() => onSelect(group.id)}
             >
               <div className="caption-row-time">
-                <label className="time-field">
-                  <span>Start</span>
+                <label className="time-field" title="Start time">
                   <input
                     type="number"
                     min={0}
                     step={timingNudgeStep}
                     value={group.start.toFixed(3)}
+                    disabled={isPending}
                     onChange={(event) => onTimingChange(group.id, Number(event.target.value), group.end)}
                     onClick={(event) => event.stopPropagation()}
                     aria-label={`Start time ${group.id}`}
                   />
                 </label>
-                <StepForward size={14} />
-                <label className="time-field">
-                  <span>End</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={timingNudgeStep}
-                    value={group.end.toFixed(3)}
-                    onChange={(event) => onTimingChange(group.id, group.start, Number(event.target.value))}
-                    onClick={(event) => event.stopPropagation()}
-                    title="Move this group's end boundary"
-                    aria-label={`End time ${group.id}`}
-                  />
-                </label>
               </div>
 
               <input
-                value={group.textOverride ?? group.text}
+                ref={(node) => {
+                  if (node) {
+                    textInputRefs.current.set(group.id, node)
+                    return
+                  }
+
+                  textInputRefs.current.delete(group.id)
+                }}
+                value={textValue}
+                readOnly={isPending}
                 onChange={(event) => onTextChange(group.id, event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    if (onSplitAtCursor(group.id, event.currentTarget.selectionStart ?? textValue.length)) {
+                      pendingTextFocusRef.current = 'start'
+                    }
+                    return
+                  }
+
+                  const selectionStart = event.currentTarget.selectionStart ?? 0
+                  const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart
+                  if (event.key === 'Backspace' && selectionStart === 0 && selectionEnd === 0) {
+                    event.preventDefault()
+                    if (onMergePrevious(group.id)) {
+                      pendingTextFocusRef.current = 'end'
+                    }
+                  }
+                }}
                 aria-label={`Caption text ${group.id}`}
               />
 
-              <div className="word-strip">
-                {groupWords.map((word) => (
-                  <span key={word.id} className="word-token" title={`${formatSeconds(word.start)}-${formatSeconds(word.end)}`}>
-                    {word.text}
-                  </span>
-                ))}
-              </div>
-
               <div className="row-actions">
-                <button type="button" title="Play this group" onClick={() => onPlayGroup(group.id)}>
+                <button
+                  type="button"
+                  title="Play this group"
+                  disabled={isPending}
+                  onClick={(event) => runRowAction(event, () => onPlayGroup(group.id))}
+                >
                   <Play size={15} />
                 </button>
                 <button
                   type="button"
-                  title={`Move start 1 frame earlier (${timingNudgeStep.toFixed(3)}s)`}
-                  onClick={() => onNudgeTiming(group.id, -timingNudgeStep)}
+                  title="Split this group"
+                  disabled={isPending}
+                  onClick={(event) => runRowAction(event, () => onSplit(group.id))}
                 >
-                  <ChevronLeft size={15} />
+                  <Scissors size={15} />
                 </button>
                 <button
                   type="button"
-                  title={`Move start 1 frame later (${timingNudgeStep.toFixed(3)}s)`}
-                  onClick={() => onNudgeTiming(group.id, timingNudgeStep)}
+                  title="Merge with next group"
+                  disabled={isPending}
+                  onClick={(event) => runRowAction(event, () => onMergeNext(group.id))}
                 >
-                  <ChevronRight size={15} />
-                </button>
-                <button type="button" title="Split this group" onClick={() => onSplit(group.id)}>
-                  <Scissors size={15} />
-                </button>
-                <button type="button" title="Merge with next group" onClick={() => onMergeNext(group.id)}>
                   <Combine size={15} />
                 </button>
               </div>
