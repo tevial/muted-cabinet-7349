@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import WaveSurfer from 'wavesurfer.js'
 import HoverPlugin from 'wavesurfer.js/plugins/hover'
 import MinimapPlugin from 'wavesurfer.js/plugins/minimap'
-import RegionsPlugin from 'wavesurfer.js/plugins/regions'
+import RegionsPlugin, { type Region } from 'wavesurfer.js/plugins/regions'
 import TimelinePlugin from 'wavesurfer.js/plugins/timeline'
 import ZoomPlugin from 'wavesurfer.js/plugins/zoom'
 
@@ -14,6 +14,7 @@ import {
   captionLaneOptions,
   captionRegionColors,
   formatTimelineLabel,
+  playbackSpeedConfig,
   timelineZoomConfig,
   waveformLaneOptions,
 } from './waveSurferTimelineConfig'
@@ -142,6 +143,13 @@ const useLatestRef = <T,>(value: T) => {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max)
 
+const normalizePlaybackRate = (rate: number) =>
+  Number(clamp(
+    Number.isFinite(rate) ? rate : playbackSpeedConfig.defaultRate,
+    playbackSpeedConfig.minRate,
+    playbackSpeedConfig.maxRate,
+  ).toFixed(2))
+
 const getCaptionRegionId = (groupId: string, index: number, canEditTiming: boolean) =>
   canEditTiming ? groupId : `${groupId}${captionRegionSliceSeparator}${index}`
 
@@ -232,7 +240,7 @@ const isUserManagedCut = (cut: EmptyZoneCut) =>
 const getSkipRegionContent = (start: number, end: number, isSelected: boolean) => {
   const content = document.createElement('span')
   content.textContent = `${formatSeconds(start)} - ${formatSeconds(end)}`
-  content.title = 'Skipped empty zone. Drag handles adjust it; select and delete to remove.'
+  content.title = 'Skipped empty zone. Resize handles adjust it; select and delete to remove.'
   Object.assign(content.style, {
     boxSizing: 'border-box',
     display: 'flex',
@@ -332,6 +340,37 @@ const getRegionColor = (isSelected: boolean) =>
 
 const getSkipRegionColor = (isSelected: boolean) =>
   isSelected ? 'rgba(226, 119, 75, 0.32)' : 'rgba(226, 119, 75, 0.2)'
+
+const getRegionContentElement = (region: Region) => {
+  const content = region.getContent(true)
+  return content instanceof HTMLElement ? content : undefined
+}
+
+const hasSkipRegionResizeHandles = (region: Region) => Boolean(
+  region.element?.querySelector('[part*="region-handle-left"]') &&
+  region.element?.querySelector('[part*="region-handle-right"]'),
+)
+
+const normalizeSkipRegionLayout = (region: Region) => {
+  if (region.element) {
+    region.element.style.top = '0%'
+    region.element.style.height = '100%'
+    region.element.style.cursor = 'default'
+  }
+
+  getRegionContentElement(region)?.style.setProperty('margin-top', '0px', 'important')
+}
+
+const normalizeSkipRegionLayouts = (skipRegionsPlugin: RegionsPlugin) => {
+  skipRegionsPlugin.getRegions().forEach(normalizeSkipRegionLayout)
+}
+
+const scheduleSkipRegionLayoutNormalization = (skipRegionsPlugin: RegionsPlugin) => {
+  window.requestAnimationFrame(() => {
+    normalizeSkipRegionLayouts(skipRegionsPlugin)
+    window.setTimeout(() => normalizeSkipRegionLayouts(skipRegionsPlugin), 24)
+  })
+}
 
 const getCapCutPointRegionContent = (title: string, color: string, width = 2) => {
   const content = document.createElement('span')
@@ -677,9 +716,18 @@ export const useWaveSurferTimeline = ({
   const [silenceDetectionDraft, setSilenceDetectionDraft] = useState<SilenceDetectionDraft | undefined>()
   const [silenceDetectionSettings, setSilenceDetectionSettingsState] = useState(defaultSilenceDetectionSettings)
   const [zoomLevel, setZoomLevelState] = useState(timelineZoomConfig.defaultPixelsPerSecond)
+  const [playbackRate, setPlaybackRateState] = useState(playbackSpeedConfig.defaultRate)
+  const playbackRateRef = useRef(playbackSpeedConfig.defaultRate)
   const silenceDetectionSettingsRef = useLatestRef(silenceDetectionSettings)
   const timelineDuration = Math.max(contentDuration, audioDuration, playheadTime, audioUrl ? 1 : 0)
   const wordMap = useMemo(() => new Map(words.map((word) => [word.id, word])), [words])
+
+  const setPlaybackRate = useCallback((nextRate: number) => {
+    const normalizedRate = normalizePlaybackRate(nextRate)
+    playbackRateRef.current = normalizedRate
+    setPlaybackRateState(normalizedRate)
+    mainWaveSurferRef.current?.setPlaybackRate(normalizedRate, true)
+  }, [])
 
   useEffect(() => {
     const captionContainer = captionContainerRef.current
@@ -1002,7 +1050,7 @@ export const useWaveSurferTimeline = ({
     if (!silenceDetectionDraftRef.current) return
 
     setSilenceDetectionDraft(undefined)
-    setStatusRef.current('Silent zones fixed. You can still drag, resize, or delete them.')
+    setStatusRef.current('Silent zones fixed. You can resize or delete them.')
   }, [setStatusRef, silenceDetectionDraftRef])
 
   const addSkipRegion = useCallback(() => {
@@ -1051,7 +1099,7 @@ export const useWaveSurferTimeline = ({
     })
     setSelectedGroupId(undefined)
     setSelectedSkipRegionId(id)
-    setStatusRef.current('Skip zone added. Drag or resize it on the waveform.')
+    setStatusRef.current('Skip zone added. Resize it with the handles on the waveform.')
   }, [
     audioUrl,
     editableEmptyZoneCutsRef,
@@ -1597,6 +1645,7 @@ export const useWaveSurferTimeline = ({
       hideScrollbar: false,
       interact: true,
       minPxPerSec: zoomLevelRef.current,
+      audioRate: playbackRateRef.current,
       plugins: [
         TimelinePlugin.create({
           container: timelineContainer,
@@ -1780,6 +1829,7 @@ export const useWaveSurferTimeline = ({
         mainWaveSurfer.setOptions({ maxPeak })
         setAudioDuration(duration)
         setPlayheadTime(mainWaveSurfer.getCurrentTime())
+        mainWaveSurfer.setPlaybackRate(playbackRateRef.current, true)
         setIsReady(true)
         syncTimelineAxis()
         setSkipRegionsReadyToken((current) => current + 1)
@@ -1799,7 +1849,7 @@ export const useWaveSurferTimeline = ({
         event.stopPropagation()
         setSelectedGroupId(undefined)
         setSelectedSkipRegionId(region.id)
-        setStatusRef.current('Skip zone selected. Drag, resize, or delete it.')
+        setStatusRef.current('Skip zone selected. Resize or delete it.')
       }),
       capCutRegionsPlugin.on('region-clicked', (region, event) => {
         event.stopPropagation()
@@ -1815,6 +1865,8 @@ export const useWaveSurferTimeline = ({
       }),
       skipRegionsPlugin.on('region-updated', (region) => {
         if (isReconcilingSkipRegionsRef.current) return
+        normalizeSkipRegionLayout(region)
+        window.setTimeout(() => normalizeSkipRegionLayout(region), 24)
 
         const nextBounds = {
           start: roundCaptionTime(region.start),
@@ -2112,17 +2164,21 @@ export const useWaveSurferTimeline = ({
       const content = getSkipRegionContent(cut.start, cut.end, isSelected)
       const color = getSkipRegionColor(isSelected)
 
-      if (!region) {
-        skipRegionsPlugin.addRegion({
+      if (!region || !region.element || !hasSkipRegionResizeHandles(region)) {
+        region?.remove()
+        const nextRegion = skipRegionsPlugin.addRegion({
           id: cut.id,
           start: cut.start,
           end: cut.end,
           content,
           color,
-          drag: true,
+          drag: false,
           resize: true,
+          resizeStart: true,
+          resizeEnd: true,
           minLength: skipRegionMinDuration,
         })
+        normalizeSkipRegionLayout(nextRegion)
         return
       }
 
@@ -2131,12 +2187,16 @@ export const useWaveSurferTimeline = ({
         end: cut.end,
         content,
         color,
-        drag: true,
+        drag: false,
         resize: true,
+        resizeStart: true,
+        resizeEnd: true,
       })
+      normalizeSkipRegionLayout(region)
     })
 
     window.requestAnimationFrame(() => {
+      scheduleSkipRegionLayoutNormalization(skipRegionsPlugin)
       isReconcilingSkipRegionsRef.current = false
     })
   }, [editableEmptyZoneCuts, selectedSkipRegionId, skipRegionsReadyToken])
@@ -2353,10 +2413,13 @@ export const useWaveSurferTimeline = ({
     keptTimelineRanges,
     loopedGroupId,
     playGroup,
+    playbackRate,
+    playbackSpeedConfig,
     resetPlaybackPosition,
     seekTo,
     selectedSkipRegionId,
     setDetectedSilenceAdjustment,
+    setPlaybackRate,
     setSilenceDetectionSettings,
     setZoomLevel,
     silenceAdjustmentConfig: {

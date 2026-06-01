@@ -26,6 +26,7 @@
 .row-actions,
 .metrics-row,
 .playback-panel,
+.playback-rate-control,
 .zoom-control,
 .caption-row-time {
   display: flex;
@@ -444,6 +445,26 @@ h2 {
 .playback-panel .primary-button {
   flex: 0 0 132px;
   width: 132px;
+}
+
+.playback-rate-control {
+  flex: 0 0 auto;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.playback-rate-control input {
+  width: 96px;
+  accent-color: #14927f;
+}
+
+.playback-rate-control strong {
+  min-width: 36px;
+  color: var(--heading);
+  text-align: right;
 }
 
 .skip-zone-controls {

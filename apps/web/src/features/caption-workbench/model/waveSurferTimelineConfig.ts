@@ -8,6 +8,13 @@ export const timelineZoomConfig = {
   wheelIterations: 120,
 }
 
+export const playbackSpeedConfig = {
+  defaultRate: 1,
+  minRate: 0.25,
+  maxRate: 2.5,
+  sliderStep: 0.05,
+}
+
 export const waveformLaneOptions = {
   height: 88,
   waveColor: '#c4d4cf',
@@ -60,3 +67,6 @@ export const formatTimelineLabel = (seconds: number) => {
 
 export const formatZoomLabel = (pixelsPerSecond: number) =>
   `${Math.round(pixelsPerSecond)} px/s`
+
+export const formatPlaybackRateLabel = (rate: number) =>
+  `${rate.toFixed(2).replace(/\.?0+$/, '')}x`

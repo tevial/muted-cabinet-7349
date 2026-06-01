@@ -230,7 +230,7 @@ integrations, tools, and other public non-UI surfaces.
 - Type: feature model
 - Location: `apps/web/src/features/caption-workbench/model/useWaveSurferTimeline.ts`
 - Purpose: Own WaveSurfer instances, official plugins, playback commands,
-  caption region reconciliation, two-lane scroll/zoom synchronization,
+  playback-speed control, caption region reconciliation, two-lane scroll/zoom synchronization,
   editable manual/automatic empty-zone skip regions, non-destructive caption
   region masking, temporary range selection actions, empty-zone skip playback,
   overlapping skip-zone normalization, detected-silence tuning controls,
@@ -275,10 +275,10 @@ integrations, tools, and other public non-UI surfaces.
 - Type: feature configuration
 - Location: `apps/web/src/features/caption-workbench/model/waveSurferTimelineConfig.ts`
 - Purpose: Provide the single source of truth for WaveSurfer visual options,
-  zoom limits, plugin labels, and caption region colors.
+  zoom limits, playback-speed limits, plugin labels, and caption region colors.
 - Public API: `timelineZoomConfig`, `waveformLaneOptions`,
   `captionLaneOptions`, `captionRegionColors`, `formatTimelineLabel`,
-  `formatZoomLabel`.
+  `formatZoomLabel`, `playbackSpeedConfig`, `formatPlaybackRateLabel`.
 - Depends on: No app state.
 - Used by: WaveSurfer timeline model and workbench screen controls.
 - Use when: Adjusting WaveSurfer timeline presentation or zoom behavior.

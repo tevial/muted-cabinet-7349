@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import { Check, Pause, Play, Plus, ScanText, Search, Trash2, WandSparkles } from 'lucide-react'
+import { Check, Gauge, Pause, Play, Plus, ScanText, Search, Trash2, WandSparkles } from 'lucide-react'
 
 import { CaptionEditor } from '../../../components/CaptionEditor'
 import { CapCutMultitrackPreview } from '../../../components/CapCutMultitrackPreview'
@@ -66,6 +66,13 @@ type CaptionWorkbenchScreenProps = {
     maxPixelsPerSecond: number
     sliderStep: number
   }
+  playbackRate: number
+  playbackRateLabel: string
+  playbackSpeedConfig: {
+    minRate: number
+    maxRate: number
+    sliderStep: number
+  }
   silenceAdjustmentConfig: {
     min: number
     max: number
@@ -107,6 +114,7 @@ type CaptionWorkbenchScreenProps = {
   onCapCutPatchRun: () => void
   onCapCutProjectsRefresh: () => void
   onTogglePlayback: () => void
+  onPlaybackRateChange: (rate: number) => void
   onAddSkipRegion: () => void
   onConfirmDetectedSilentSkipRegions: () => void
   onDetectedSilenceAdjustmentChange: (adjustment: number) => void
@@ -172,6 +180,9 @@ export function CaptionWorkbenchScreen({
   isTimelineReady,
   timelineContainerRef,
   timelineZoomConfig,
+  playbackRate,
+  playbackRateLabel,
+  playbackSpeedConfig,
   silenceAdjustmentConfig,
   silenceDetectionSettingConfig,
   silenceDetectionSettings,
@@ -205,6 +216,7 @@ export function CaptionWorkbenchScreen({
   onCapCutPatchRun,
   onCapCutProjectsRefresh,
   onTogglePlayback,
+  onPlaybackRateChange,
   onAddSkipRegion,
   onConfirmDetectedSilentSkipRegions,
   onDetectedSilenceAdjustmentChange,
@@ -298,6 +310,21 @@ export function CaptionWorkbenchScreen({
               {isPlaying ? <Pause size={17} /> : <Play size={17} />}
               {isPlaying ? 'Pause' : 'Play timeline'}
             </button>
+
+            <label className="playback-rate-control" title="Playback speed">
+              <Gauge size={16} />
+              <span>Speed</span>
+              <input
+                type="range"
+                min={playbackSpeedConfig.minRate}
+                max={playbackSpeedConfig.maxRate}
+                step={playbackSpeedConfig.sliderStep}
+                value={playbackRate}
+                disabled={!audioUrl || !isTimelineReady}
+                onChange={(event) => onPlaybackRateChange(Number(event.target.value))}
+              />
+              <strong>{playbackRateLabel}</strong>
+            </label>
 
             <div className="skip-zone-controls" aria-label="Skip zone actions">
               <button

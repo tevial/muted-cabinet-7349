@@ -70,7 +70,12 @@ import {
   mergeGroupsWithPendingChunks,
   runWithConcurrency,
 } from './model/chunkTranscription'
-import { formatZoomLabel, timelineZoomConfig } from './model/waveSurferTimelineConfig'
+import {
+  formatPlaybackRateLabel,
+  formatZoomLabel,
+  playbackSpeedConfig,
+  timelineZoomConfig,
+} from './model/waveSurferTimelineConfig'
 import { CaptionWorkbenchScreen } from './ui/CaptionWorkbenchScreen'
 
 const isEditableShortcutTarget = (target: EventTarget | null) => {
@@ -614,9 +619,11 @@ export function CaptionWorkbench() {
     keptTimelineRanges,
     loopedGroupId,
     playGroup,
+    playbackRate,
     resetPlaybackPosition,
     selectedSkipRegionId,
     setDetectedSilenceAdjustment,
+    setPlaybackRate,
     setSilenceDetectionSettings,
     setZoomLevel,
     silenceAdjustmentConfig,
@@ -2027,6 +2034,9 @@ export function CaptionWorkbench() {
       isTimelineReady={isTimelineReady}
       timelineContainerRef={timelineContainerRef}
       timelineZoomConfig={timelineZoomConfig}
+      playbackRate={playbackRate}
+      playbackRateLabel={formatPlaybackRateLabel(playbackRate)}
+      playbackSpeedConfig={playbackSpeedConfig}
       waveformContainerRef={waveformContainerRef}
       zoomLabel={formatZoomLabel(zoomLevel)}
       zoomLevel={zoomLevel}
@@ -2073,6 +2083,7 @@ export function CaptionWorkbench() {
       onCapCutPatchRun={runCapCutPatch}
       onCapCutProjectsRefresh={refreshCapCutProjects}
       onTogglePlayback={togglePlayback}
+      onPlaybackRateChange={setPlaybackRate}
       onAddSkipRegion={addSkipRegion}
       hasDetectedSilenceDraft={hasDetectedSilenceDraft}
       detectedSilenceAdjustment={detectedSilenceAdjustment}

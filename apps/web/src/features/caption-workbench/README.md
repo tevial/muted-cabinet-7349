@@ -15,10 +15,10 @@ This feature contains:
 - `ui/CaptionGapPanel.tsx` - selected subtitle-only gap details and relink
   action.
 - `model/useWaveSurferTimeline.ts` - WaveSurfer instances, official plugins,
-  playback, precise segment loop, seek, caption regions, editable empty-zone
-  skip regions, temporary range selections, caption-gap selection, CapCut
-  source-cut selection, derived caption-region masking, zoom, scroll sync, and
-  timeline audition state.
+  playback, playback speed, precise segment loop, seek, caption regions,
+  editable empty-zone skip regions, temporary range selections, caption-gap
+  selection, CapCut source-cut selection, derived caption-region masking, zoom,
+  scroll sync, and timeline audition state.
 - `model/waveSurferTimelineConfig.ts` - WaveSurfer visual options, zoom limits,
   timeline label formatting, and caption region colors.
 - `model/silenceDetection.ts` - local waveform silence detection using the
@@ -49,11 +49,14 @@ Rules:
   project snapshot.
 - Do not call OpenAI or external providers from browser code; call the local API
   transcription client.
-- Keep playback, plugin lifecycle, timeline zoom/scroll, and audition state in
-  `model`, not in the screen.
+- Keep playback, playback speed, plugin lifecycle, timeline zoom/scroll, and
+  audition state in `model`, not in the screen. Playback speed is set through
+  WaveSurfer `setPlaybackRate`.
 - Treat skip zones as a non-destructive timeline mask. They may hide or split
   caption regions visually and during playback, but source words/groups remain
-  in memory so removing or moving the skip zone restores the affected captions.
+  in memory so removing or resizing the skip zone restores the affected captions.
+- Keep skip zones resize-only on the waveform. Moving a whole zone is too easy
+  to trigger accidentally; changing its start/end handles is the supported edit.
 - Treat caption gaps as subtitle-only ranges. They keep audio/video intact and
   hide only caption display between neighboring groups. `Option` + drag on a
   caption boundary creates or edits a gap; dragging back into the neighboring

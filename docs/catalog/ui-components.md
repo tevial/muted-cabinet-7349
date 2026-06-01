@@ -22,8 +22,8 @@ patterns.
 - Location: `apps/web/src/features/caption-workbench/ui/CaptionWorkbenchScreen.tsx`
 - Purpose: Present the main desktop caption editing screen from controller props.
 - Public API: Typed view props for toolbar, settings popover content, playback,
-  undo/redo actions, kept-chunk transcription, manual and automatic skip-zone
-  controls, CapCut cut-manifest export, WaveSurfer timeline refs,
+  playback-speed control, undo/redo actions, kept-chunk transcription, manual
+  and automatic skip-zone controls, CapCut cut-manifest export, WaveSurfer timeline refs,
   draft-only detected-silence threshold/normalization/tuning controls, zoom
   control, and right-rail editor regions.
 - Used by: `CaptionWorkbench`.
