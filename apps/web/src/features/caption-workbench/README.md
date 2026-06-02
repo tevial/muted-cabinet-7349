@@ -100,9 +100,12 @@ Rules:
 - Keep undo/redo in the feature controller. History stores editor snapshots
   across words, groups, grouping settings, selected group, and skip-zone state.
 - The Caption groups header owns the `maxChars` control because it directly
-  changes visible group wrapping. Changing it rebuilds committed groups from
-  current words when no caption draft is pending; with a draft pending, ask the
-  user to apply or revert the draft first.
+  changes automatic group wrapping. In auto grouping mode, changing it rebuilds
+  committed groups from current words when no caption draft is pending. After a
+  user applies manual row text/split/merge/timing changes, the project enters
+  manual grouping mode: `maxChars` updates are stored but do not rebuild groups
+  until the user clicks `Regroup` and confirms that manual group layout changes
+  should be reset. Corrected words are always kept.
 - Caption group rows are compact dark editor rows. Long text clips under a
   right-side fade, the fade expands on row hover, and the only quick row action
   is the split/scissors action shown on hover.

@@ -8,6 +8,7 @@
 | Caption group | Subtitle block containing one or more caption words. | Exported as SRT cue. |
 | Caption rules | User-adjustable grouping settings. | Applied by caption domain; current grouping wraps whole words by maximum character count and does not link groups across active skip zones. |
 | Caption draft | Staged caption row text/split/merge edits. | Applied explicitly back into words before regroup/export/alignment. |
+| Manual grouping | Committed caption rows arranged by the user. | `maxChars` changes are stored but do not auto-regroup until the user confirms `Regroup`; corrected words remain. |
 | Ingest | Conversion from transcription response/cache to editor-ready words/groups. | Rebuilds groups from words. |
 | Transcription cache | Browser-local cached transcription by fingerprint and language. | Avoids repeated paid API calls. |
 | Saved project | Browser-local editor state. | Includes words, groups, settings, source metadata. |

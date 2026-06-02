@@ -13,6 +13,9 @@ Use this module for:
 - Ingesting transcription responses into editor-ready words/groups.
 - Applying document-style group text edits to the editor word layer so
   corrected, inserted, or removed words remain the source for later regrouping.
+- Applying a caption draft preserves the user's manual group rows. Character
+  wrapping is only reapplied by an explicit regroup action, which rebuilds
+  groups from the corrected word layer.
 - Grouping by maximum caption characters with whole-word wrapping and optional
   hard break ranges from active skip zones. `maxWords`, `minDuration`, and
   `pauseThreshold` stay in the shared settings contract only for

@@ -113,11 +113,16 @@
 - Preconditions: Editor has caption words.
 - Steps:
   1. Caption domain normalizes grouping settings.
-  2. Caption domain rebuilds groups from current words using character-based
-     wrapping. Active skip-zone gaps are passed as hard boundaries so captions
-     do not link across removed timeline ranges.
-  3. Workbench replaces group state and preserves selection if possible. If a
-     caption text draft is pending, the workbench asks the user to apply or
+  2. In auto grouping mode, rule changes immediately rebuild groups from
+     current words using character-based wrapping. Active skip-zone gaps are
+     passed as hard boundaries so captions do not link across removed timeline
+     ranges.
+  3. In manual grouping mode, rule changes are stored but do not rebuild groups
+     until the user clicks `Regroup`.
+  4. If `Regroup` is requested in manual grouping mode, the workbench asks for
+     confirmation and then rebuilds groups from the corrected word layer. Manual
+     group layout changes are reset; corrected words remain.
+  5. If a caption text draft is pending, the workbench asks the user to apply or
      revert it before rebuilding from the committed word layer.
 - Result: Caption groups reflect current rules.
 - Failure states: No words available; group count may be unchanged if settings
@@ -136,15 +141,14 @@
   2. Workbench disables export, transcription, alignment, and project save
      actions that require committed caption state.
   3. User clicks `Update groups` to apply the draft or `Revert` to discard it.
-  4. Caption domain applies the staged text edits to the word layer, then
-     rebuilds groups once through the current character-wrap settings and
-     active skip-zone boundaries.
+  4. Caption domain applies the staged text edits to the word layer and keeps
+     the draft row layout as manual grouping, even when a row exceeds the
+     current `maxChars` value.
   5. Workbench marks the affected caption range dirty for later MFA alignment.
 - Result: Text editing behaves like a document draft while the durable editor
-  state remains words plus generated groups.
-- Failure states: Draft is empty or matches committed groups; applying may
-  produce different group boundaries because current grouping settings are
-  authoritative.
+  state remains words plus manually arranged groups.
+- Failure states: Draft is empty or matches committed groups; applying preserves
+  the draft rows even when they exceed current automatic grouping limits.
 - Related domain concepts: CaptionWord, CaptionGroup, GroupingSettings.
 
 ### Align Caption Timings

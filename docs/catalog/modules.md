@@ -164,7 +164,8 @@ integrations, tools, and other public non-UI surfaces.
 - Type: persistence service
 - Location: `apps/web/src/services/storage/projectRepository.ts`
 - Purpose: Own browser-local project autosave, source-keyed project restore,
-  serialized skip-zone restore, and transcription cache access.
+  manual-vs-auto grouping mode, serialized skip-zone restore, and transcription
+  cache access.
 - Public API: `loadProject`, `loadProjectBySource`, `saveProject`,
   `loadTranscriptionCache`, `saveTranscriptionCache`,
   `getTranscriptionCacheMeta`, `getSavedProjectSourceKey`,

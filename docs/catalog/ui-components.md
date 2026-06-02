@@ -188,9 +188,12 @@ patterns.
   hidden groups remain in source state. Pending transcription rows are read-only
   loading placeholders until the related chunk returns words. Draft text edits
   expose an inline `Update groups` / `Revert` action bar instead of forcing a
-  regroup on every keystroke. The header owns the `maxChars` wrapping control.
+  regroup on every keystroke. The header owns the `maxChars` wrapping control
+  and shows `Regroup` when manual grouping is active, because changing
+  `maxChars` no longer auto-wraps manually arranged rows.
 - Public API: `groups`, optional `totalGroups`, selection,
-  `maxChars`, draft state, text/timing/cursor-split/merge/split callbacks.
+  `maxChars`, draft/manual grouping state, text/timing/cursor-split/merge/split
+  callbacks.
 - Used by: Caption workbench right rail.
 - Use when: Editing caption groups as rows.
 - Do not use for: Owning split/merge/timing rules.

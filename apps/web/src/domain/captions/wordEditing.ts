@@ -1,5 +1,4 @@
-import type { CaptionGroup, CaptionWord, GroupingSettings } from '../../contracts/captions'
-import { groupWords } from './grouping'
+import type { CaptionGroup, CaptionWord } from '../../contracts/captions'
 import { getGroupText, roundCaptionTime } from './timing'
 
 export type ApplyGroupTextEditInput = {
@@ -18,10 +17,8 @@ export type ApplyGroupTextEditResult = {
 }
 
 export type ApplyCaptionGroupDraftInput = {
-  breakRanges?: Array<{ start: number; end: number }>
   words: CaptionWord[]
   draftGroups: CaptionGroup[]
-  settings: GroupingSettings
   createWordId: (group: CaptionGroup, groupIndex: number, wordIndex: number) => string
 }
 
@@ -218,8 +215,6 @@ const buildDraftGroupsFromWordBlock = (
   draftGroup: CaptionGroup,
   wordIds: string[],
   words: CaptionWord[],
-  settings: GroupingSettings,
-  breakRanges: Array<{ start: number; end: number }>,
 ) => {
   const wordMap = new Map(words.map((word) => [word.id, word]))
   const blockWords = wordIds
@@ -229,26 +224,17 @@ const buildDraftGroupsFromWordBlock = (
 
   if (!blockWords.length) return []
 
-  const wrappedGroups = groupWords(blockWords, settings, { breakRanges })
-  return wrappedGroups.map((group, index) => {
-    const isFirst = index === 0
-    const isLast = index === wrappedGroups.length - 1
-
-    return {
-      ...group,
-      id: wrappedGroups.length === 1 ? draftGroup.id : `${draftGroup.id}_wrap_${index + 1}`,
-      start: isFirst ? draftGroup.start : group.start,
-      end: isLast ? draftGroup.end : group.end,
-      textOverride: undefined,
-    }
-  })
+  return [{
+    ...draftGroup,
+    wordIds: blockWords.map((word) => word.id),
+    text: getGroupText(blockWords),
+    textOverride: undefined,
+  }]
 }
 
 export const applyCaptionGroupDraftToWords = ({
-  breakRanges = [],
   words,
   draftGroups,
-  settings,
   createWordId,
 }: ApplyCaptionGroupDraftInput): ApplyCaptionGroupDraftResult => {
   let nextWords = words
@@ -276,7 +262,7 @@ export const applyCaptionGroupDraftToWords = ({
   })
 
   const groups = draftGroups.flatMap((draftGroup, index) =>
-    buildDraftGroupsFromWordBlock(draftGroup, draftWordBlocks[index] ?? [], nextWords, settings, breakRanges),
+    buildDraftGroupsFromWordBlock(draftGroup, draftWordBlocks[index] ?? [], nextWords),
   )
 
   return {

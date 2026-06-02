@@ -9,11 +9,13 @@ type CaptionEditorProps = {
   groups: CaptionGroup[]
   aligningGroupIds?: string[]
   hasDraft?: boolean
+  isManualGrouping?: boolean
   maxChars: number
   selectedGroupId?: string
   totalGroups?: number
   onApplyDraft: () => void
   onMaxCharsChange: (maxChars: number) => void
+  onRegroup: () => void
   onRevertDraft: () => void
   onSelect: (groupId: string) => void
   onTextChange: (groupId: string, text: string) => void
@@ -28,11 +30,13 @@ export function CaptionEditor({
   groups,
   aligningGroupIds = [],
   hasDraft = false,
+  isManualGrouping = false,
   maxChars,
   selectedGroupId,
   totalGroups,
   onApplyDraft,
   onMaxCharsChange,
+  onRegroup,
   onRevertDraft,
   onSelect,
   onTextChange,
@@ -96,6 +100,17 @@ export function CaptionEditor({
               aria-label="Maximum caption characters"
             />
           </label>
+          {isManualGrouping ? (
+            <button
+              className={ui.maxCharsRegroupButton}
+              type="button"
+              disabled={hasDraft}
+              title="Rebuild groups from corrected words and max chars"
+              onClick={onRegroup}
+            >
+              Regroup
+            </button>
+          ) : null}
           <span className={ui.captionCount}>{groupCountLabel}</span>
         </div>
       </div>

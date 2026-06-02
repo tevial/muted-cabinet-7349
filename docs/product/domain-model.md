@@ -53,7 +53,9 @@
 - Invariants: Settings are normalized before use. A word is never split to
   satisfy `maxChars`; if it does not fit, the whole word starts the next group.
   Active skip zones are hard grouping boundaries, so groups are not linked
-  across removed timeline ranges.
+  across removed timeline ranges. `maxChars` auto-wraps only in auto grouping
+  mode; after manual row edits are applied, explicit `Regroup` confirmation is
+  required and corrected words remain.
 - Lifecycle/statuses: default, user-adjusted, persisted.
 - Owned by: caption domain.
 
@@ -71,7 +73,7 @@
 
 - Purpose: Browser-local editor state.
 - Key fields: source metadata, language, words, groups, grouping settings,
-  serialized skip-zone state.
+  manual grouping mode, serialized skip-zone state.
 - Relationships: Restored on boot and autosaved after editor state changes.
 - Invariants: Does not contain server secrets, raw API credentials, source
   media bytes, or browser object URLs. Saved projects are stored both as the

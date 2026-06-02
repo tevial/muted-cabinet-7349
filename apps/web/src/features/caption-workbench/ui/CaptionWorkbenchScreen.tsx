@@ -46,6 +46,7 @@ type CaptionWorkbenchScreenProps = {
   selectedGroupId?: string
   selectedSkipRegionId?: string
   isPlaying: boolean
+  isManualGrouping: boolean
   isTranscribing: boolean
   isAligningCaptions: boolean
   isCapCutPatchBusy: boolean
@@ -169,6 +170,7 @@ export function CaptionWorkbenchScreen({
   totalGroups,
   selectedGroupId,
   isPlaying,
+  isManualGrouping,
   isTranscribing,
   isCapCutPatchBusy,
   isCapCutPatchOpen,
@@ -233,6 +235,7 @@ export function CaptionWorkbenchScreen({
   onTranscribeKeptChunks,
   onEditorSelect,
   onApplyCaptionDraft,
+  onRegroup,
   onRevertCaptionDraft,
   onGroupTextChange,
   onGroupTimingChange,
@@ -477,11 +480,13 @@ export function CaptionWorkbenchScreen({
             aligningGroupIds={aligningGroupIds}
             groups={groups}
             hasDraft={hasCaptionDraft}
+            isManualGrouping={isManualGrouping}
             maxChars={settings.maxChars}
             selectedGroupId={selectedGroupId}
             totalGroups={totalGroups}
             onApplyDraft={onApplyCaptionDraft}
             onMaxCharsChange={onMaxCharsChange}
+            onRegroup={onRegroup}
             onRevertDraft={onRevertCaptionDraft}
             onSelect={onEditorSelect}
             onTextChange={onGroupTextChange}

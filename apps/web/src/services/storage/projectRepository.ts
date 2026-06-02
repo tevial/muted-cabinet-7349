@@ -27,6 +27,7 @@ export type SavedProject = {
   words: CaptionWord[]
   groups: CaptionGroup[]
   settings: GroupingSettings
+  manualGrouping?: boolean
   skipState?: SavedTimelineSkipState
 } & SavedProjectSource
 
@@ -195,6 +196,7 @@ const normalizeSavedProject = (project: SavedProject): SavedProject | null => {
     ...(sourceKind ? { sourceKind } : {}),
     ...(capCutProject ? { capCutProject } : {}),
     settings: normalizeGroupingSettings(project.settings),
+    manualGrouping: project.manualGrouping === true,
     skipState: normalizeSavedTimelineSkipState(project.skipState),
   }
 }
@@ -206,6 +208,7 @@ export const createSavedProject = (
   settings: GroupingSettings,
   source?: SavedProjectSource,
   skipState?: SavedTimelineSkipState,
+  manualGrouping = false,
 ): SavedProject => ({
   version: 1,
   savedAt: new Date().toISOString(),
@@ -214,6 +217,7 @@ export const createSavedProject = (
   words,
   groups,
   settings,
+  ...(manualGrouping ? { manualGrouping: true } : {}),
   ...(skipState ? { skipState } : {}),
 })
 

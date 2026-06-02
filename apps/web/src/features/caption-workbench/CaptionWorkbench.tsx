@@ -115,6 +115,7 @@ type TranscriptionMediaSource = {
 
 type EditorHistorySnapshot = {
   groups: CaptionGroup[]
+  manualGrouping: boolean
   selectedGroupId?: string
   settings: GroupingSettings
   skipState: TimelineSkipState
@@ -173,6 +174,7 @@ const cloneSettings = (sourceSettings: GroupingSettings) => ({ ...sourceSettings
 
 const cloneHistorySnapshot = (snapshot: EditorHistorySnapshot): EditorHistorySnapshot => ({
   groups: cloneGroups(snapshot.groups),
+  manualGrouping: snapshot.manualGrouping,
   selectedGroupId: snapshot.selectedGroupId,
   settings: cloneSettings(snapshot.settings),
   skipState: cloneTimelineSkipState(snapshot.skipState),
@@ -287,6 +289,7 @@ const restoreTimelineSkipState = (
 const getHistorySignature = (snapshot: EditorHistorySnapshot) =>
   JSON.stringify({
     groups: snapshot.groups,
+    manualGrouping: snapshot.manualGrouping,
     selectedGroupId: snapshot.selectedGroupId,
     settings: snapshot.settings,
     skipState: getSkipStateSignature(snapshot.skipState),
@@ -373,6 +376,7 @@ export function CaptionWorkbench() {
   const [groups, setGroups] = useState<CaptionGroup[]>(initialGroups)
   const [captionDraftGroups, setCaptionDraftGroups] = useState<CaptionGroup[] | undefined>()
   const [settings, setSettings] = useState<GroupingSettings>(savedProject?.settings ?? defaultGroupingSettings)
+  const [isManualGrouping, setIsManualGrouping] = useState(savedProject?.manualGrouping === true)
   const [skipState, setSkipState] = useState(createTimelineSkipState)
   const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(initialGroups[0]?.id)
   const [file, setFile] = useState<File | undefined>()
@@ -443,11 +447,12 @@ export function CaptionWorkbench() {
   const [history, setHistory] = useState<EditorHistoryState>({ past: [], future: [] })
   const getEditorSnapshot = useCallback((): EditorHistorySnapshot => ({
     groups: cloneGroups(groups),
+    manualGrouping: isManualGrouping,
     selectedGroupId,
     settings: cloneSettings(settings),
     skipState: cloneTimelineSkipState(skipState),
     words: cloneWords(words),
-  }), [groups, selectedGroupId, settings, skipState, words])
+  }), [groups, isManualGrouping, selectedGroupId, settings, skipState, words])
   const commitHistory = useCallback((source: string) => {
     const snapshot = getEditorSnapshot()
     const signature = getHistorySignature(snapshot)
@@ -492,6 +497,7 @@ export function CaptionWorkbench() {
     setCaptionDraftGroups(undefined)
     setWords(nextSnapshot.words)
     setGroups(nextSnapshot.groups)
+    setIsManualGrouping(nextSnapshot.manualGrouping)
     setSettings(nextSnapshot.settings)
     setSkipState(nextSnapshot.skipState)
     setSelectedGroupId(nextSnapshot.selectedGroupId)
@@ -507,8 +513,10 @@ export function CaptionWorkbench() {
     const nextGroups = cloneGroups(project.groups)
     const nextSettings = cloneSettings(project.settings)
     const nextSkipState = restoreTimelineSkipState(project.skipState, sourceUrl)
+    const nextManualGrouping = project.manualGrouping === true
     const nextSnapshot: EditorHistorySnapshot = {
       groups: nextGroups,
+      manualGrouping: nextManualGrouping,
       selectedGroupId: nextGroups[0]?.id,
       settings: nextSettings,
       skipState: nextSkipState,
@@ -523,6 +531,7 @@ export function CaptionWorkbench() {
     setCaptionDraftGroups(undefined)
     setWords(nextWords)
     setGroups(nextGroups)
+    setIsManualGrouping(nextManualGrouping)
     setSettings(nextSettings)
     setLanguage(project.language)
     setSkipState(nextSkipState)
@@ -621,6 +630,7 @@ export function CaptionWorkbench() {
       setCaptionDraftGroups(undefined)
       setWords(nextWords)
       setGroups(nextGroups)
+      setIsManualGrouping(false)
       setAlignmentDirtyGroupIds(new Set())
       setSelectedGroupId(nextGroups.find((group) => group.start >= start && group.start < end)?.id)
       setTranscriptSource((current) => current?.sourceKind === 'capcutProject'
@@ -666,6 +676,7 @@ export function CaptionWorkbench() {
 
     commitHistory(mode === 'independent' ? 'group timing independent edit' : 'group timing edit')
     groupMutationSourceRef.current = 'group timing edit'
+    setIsManualGrouping(true)
     setGroups((current) => setGroupBoundary(current, groupId, start, end, { mode }))
   }, [captionDraftGroups, commitHistory, writeCaptionDraftGroups])
   const handleCapCutSourceCutSelect = useCallback((boundaryId?: string) => {
@@ -1066,6 +1077,7 @@ export function CaptionWorkbench() {
         setCaptionDraftGroups(undefined)
         setWords(nextWords)
         setGroups(nextGroups)
+        setIsManualGrouping(false)
         setSelectedGroupId((current) =>
           current && nextGroups.some((group) => group.id === current)
             ? current
@@ -1116,6 +1128,7 @@ export function CaptionWorkbench() {
       setCaptionDraftGroups(undefined)
       setWords(nextWords)
       setGroups(nextGroups)
+      setIsManualGrouping(false)
       setAlignmentDirtyGroupIds(new Set())
       setSelectedGroupId(nextGroups.find((group) =>
         ranges.some((range) => group.start >= range.start && group.start < range.end),
@@ -1151,6 +1164,7 @@ export function CaptionWorkbench() {
       setCaptionDraftGroups(undefined)
       setWords(words)
       setGroups(groups)
+      setIsManualGrouping(isManualGrouping)
       flowWarn('chunk transcribe: failed', {
         chunks: transcribableKeptRanges.length,
         message: error instanceof Error ? error.message : 'Unknown error',
@@ -1166,6 +1180,7 @@ export function CaptionWorkbench() {
     groupWordsForCurrentTimeline,
     groups,
     hasChunkTranscriptionSource,
+    isManualGrouping,
     language,
     settings,
     stopPlayback,
@@ -1185,8 +1200,8 @@ export function CaptionWorkbench() {
   const savedSkipState = useMemo(() => serializeTimelineSkipState(skipState), [skipState])
   const currentProject = useMemo(
     () =>
-      createSavedProject(language, words, groups, settings, transcriptSource, savedSkipState),
-    [groups, language, savedSkipState, settings, transcriptSource, words],
+      createSavedProject(language, words, groups, settings, transcriptSource, savedSkipState, isManualGrouping),
+    [groups, isManualGrouping, language, savedSkipState, settings, transcriptSource, words],
   )
   const canAutosaveProject = Boolean(transcriptSource?.audioFingerprint)
   const buildCurrentCapCutManifest = useCallback(
@@ -1275,6 +1290,7 @@ export function CaptionWorkbench() {
       } else {
         historySignatureRef.current = getHistorySignature({
           groups: [],
+          manualGrouping: false,
           selectedGroupId: undefined,
           settings,
           skipState: nextSkipState,
@@ -1286,6 +1302,7 @@ export function CaptionWorkbench() {
         setCaptionDraftGroups(undefined)
         setWords([])
         setGroups([])
+        setIsManualGrouping(false)
         setAlignmentDirtyGroupIds(new Set())
         setSelectedGroupId(undefined)
         setSkipState(nextSkipState)
@@ -1397,9 +1414,11 @@ export function CaptionWorkbench() {
       groups: groups.length,
       note: captionDraftGroups
         ? 'Pending caption text draft will be rebuilt after Update groups.'
+        : isManualGrouping
+          ? 'Manual grouping is active; rules are stored until explicit Regroup.'
         : 'Groups are recalculated from the editor word layer when rules are applied.',
     })
-  }, [captionDraftGroups, groups.length, settings, words.length])
+  }, [captionDraftGroups, groups.length, isManualGrouping, settings, words.length])
 
   useEffect(() => {
     return () => {
@@ -1442,7 +1461,7 @@ export function CaptionWorkbench() {
     nextGroups: CaptionGroup[],
     source = 'groups write',
     details?: Record<string, unknown>,
-    options?: { recordHistory?: boolean },
+    options?: { manualGrouping?: boolean; recordHistory?: boolean },
   ) => {
     if (options?.recordHistory ?? true) {
       commitHistory(source)
@@ -1462,6 +1481,7 @@ export function CaptionWorkbench() {
     }
     setCaptionDraftGroups(undefined)
     setGroups(normalizedGroups)
+    setIsManualGrouping(options?.manualGrouping === true)
     setSelectedGroupId((current) => current && normalizedGroups.some((group) => group.id === current) ? current : normalizedGroups[0]?.id)
   }, [commitHistory])
 
@@ -1691,6 +1711,7 @@ export function CaptionWorkbench() {
         setCaptionDraftGroups(undefined)
         setWords([])
         setGroups([])
+        setIsManualGrouping(false)
         setAlignmentDirtyGroupIds(new Set())
         setSkipState(createTimelineSkipState())
         setSelectedGroupId(undefined)
@@ -1732,9 +1753,19 @@ export function CaptionWorkbench() {
       return
     }
 
+    if (
+      isManualGrouping &&
+      !window.confirm(
+        'Regroup will rebuild caption groups from the current corrected words and max character limit. Your corrected text stays, but manual group splits and manual group layout changes will be reset.',
+      )
+    ) {
+      return
+    }
+
     stopPlayback()
     const nextGroups = groupWordsForCurrentTimeline(words, settings)
     flowLog('regroup: local rebuild', {
+      manualGrouping: isManualGrouping,
       words: words.length,
       previousGroups: groups.length,
       nextGroups: nextGroups.length,
@@ -1747,7 +1778,11 @@ export function CaptionWorkbench() {
       previousGroups: groups.length,
       settings,
     })
-    setStatus('Groups rebuilt from current editor words and caption rules.')
+    setStatus(
+      isManualGrouping
+        ? 'Manual grouping reset. Corrected words were kept and groups were rebuilt from max chars.'
+        : 'Groups rebuilt from current editor words and caption rules.',
+    )
   }
 
   const handleTranscribe = async () => {
@@ -1853,10 +1888,8 @@ export function CaptionWorkbench() {
       groups: nextGroups,
       editedRanges,
     } = applyCaptionGroupDraftToWords({
-      breakRanges: captionGroupingBreakRanges,
       words,
       draftGroups,
-      settings,
       createWordId: (draftGroup, groupIndex, wordIndex) => {
         const existingFactory = draftWordIdFactories.get(groupIndex)
         if (existingFactory) return existingFactory(wordIndex)
@@ -1884,7 +1917,7 @@ export function CaptionWorkbench() {
       nextWords: nextWords.length,
       nextGroups: nextGroups.length,
       settings,
-    }, { recordHistory: false })
+    }, { manualGrouping: true, recordHistory: false })
     markAlignmentDirty(editedGroupIds)
     setSelectedGroupId(
       selectedRange
@@ -1893,12 +1926,11 @@ export function CaptionWorkbench() {
     )
     setStatus(
       editedRanges.length
-        ? `Applied text draft and rebuilt ${nextGroups.length} groups.`
-        : `Rebuilt ${nextGroups.length} groups from current caption rules.`,
+        ? `Applied text draft and kept ${nextGroups.length} manual groups.`
+        : `Applied manual group layout with ${nextGroups.length} groups.`,
     )
   }, [
     captionDraftGroups,
-    captionGroupingBreakRanges,
     commitHistory,
     markAlignmentDirty,
     selectedGroupId,
@@ -1938,6 +1970,7 @@ export function CaptionWorkbench() {
 
     commitHistory('group start nudge')
     groupMutationSourceRef.current = 'group start nudge'
+    setIsManualGrouping(true)
     setGroups((current) => nudgeGroupStartBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group start nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
@@ -1956,6 +1989,7 @@ export function CaptionWorkbench() {
 
     commitHistory('group end nudge')
     groupMutationSourceRef.current = 'group end nudge'
+    setIsManualGrouping(true)
     setGroups((current) => nudgeGroupEndBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group end nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
@@ -2073,7 +2107,14 @@ export function CaptionWorkbench() {
     const normalizedSettings = normalizeGroupingSettings(nextSettings)
     if (captionDraftGroups) {
       setSettings(normalizedSettings)
-      setStatus('Caption rules updated. Apply the text draft to rebuild groups with the new limits.')
+      setStatus('Caption rules updated. Apply or revert the text draft before regrouping.')
+      return
+    }
+
+    if (isManualGrouping) {
+      commitHistory('settings change: manual grouping')
+      setSettings(normalizedSettings)
+      setStatus('Max chars updated. Use Regroup to rebuild groups from corrected words.')
       return
     }
 
@@ -2271,6 +2312,7 @@ export function CaptionWorkbench() {
       selectedGroupId={visibleSelectedGroupId}
       selectedSkipRegionId={selectedSkipRegionId}
       isPlaying={isPlaying}
+      isManualGrouping={isManualGrouping}
       isTranscribing={isTranscribing}
       isAligningCaptions={isAligningCaptions}
       alignmentProgressLabel={alignmentProgressLabel}

@@ -169,6 +169,8 @@ export const ui = {
   captionCount: 'text-xs font-medium text-white/40',
   maxCharsControl: 'inline-flex items-center gap-1.5 text-[11px] font-medium tracking-[0.16px] text-white/40',
   maxCharsInput: 'min-h-7 w-[52px] rounded-sm border-0 bg-white/10 px-2 py-1 text-xs font-semibold text-white outline-none',
+  maxCharsRegroupButton:
+    'min-h-7 rounded-sm border border-white/10 bg-white/10 px-2 text-[11px] font-semibold text-white transition-colors enabled:hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40',
   captionDraftActions: 'flex items-center gap-2 border-b border-[#141414] bg-[#262626] px-3 py-2',
   captionDraftLabel: 'mr-auto text-xs font-bold text-white/40',
   captionDraftButton: 'min-h-[30px] border-0 bg-white/10 px-[9px] text-xs text-white hover:bg-white/15',
