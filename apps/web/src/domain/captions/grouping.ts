@@ -2,43 +2,41 @@ import type { CaptionGroup, CaptionWord, GroupingSettings } from '../../contract
 import { defaultGroupingSettings, normalizeGroupingSettings } from './settings'
 import { getGroupText, normalizeGroupTimings } from './timing'
 
-const connectorWords = new Set([
-  'а',
-  'але',
-  'без',
-  'бо',
-  'в',
-  'від',
-  'до',
-  'з',
-  'за',
-  'і',
-  'й',
-  'коли',
-  'на',
-  'не',
-  'ну',
-  'та',
-  'то',
-  'у',
-  'це',
-  'що',
-  'як',
-  'якщо',
-])
+export type CaptionGroupingRange = {
+  start: number
+  end: number
+}
 
-const normalizeWord = (text: string) =>
-  text.trim().toLowerCase().replace(/^[.,!?;:"'()[\]{}]+|[.,!?;:"'()[\]{}]+$/g, '')
+type GroupWordsOptions = {
+  breakRanges?: CaptionGroupingRange[]
+}
 
-export const isConnectorWord = (text: string) => connectorWords.has(normalizeWord(text))
+const normalizeBreakRanges = (ranges: CaptionGroupingRange[] = []) =>
+  ranges
+    .map((range) => ({
+      start: Math.max(0, range.start),
+      end: Math.max(0, range.end),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+
+const getBreakBoundaries = (ranges: CaptionGroupingRange[]) =>
+  ranges.flatMap((range) => [range.start, range.end]).sort((left, right) => left - right)
+
+const hasBreakBoundaryBetween = (previous: CaptionWord, word: CaptionWord, boundaries: number[]) =>
+  boundaries.some((boundary) => boundary > previous.start && boundary <= word.start)
 
 export const groupWords = (
   words: CaptionWord[],
   settings: GroupingSettings = defaultGroupingSettings,
+  options: GroupWordsOptions = {},
 ): CaptionGroup[] => {
   const safeSettings = normalizeGroupingSettings(settings)
+  const breakRanges = normalizeBreakRanges(options.breakRanges)
+  const breakBoundaries = getBreakBoundaries(breakRanges)
   const groups: CaptionGroup[] = []
   let current: CaptionWord[] = []
+  const sortedWords = [...words].sort((left, right) => left.start - right.start || left.end - right.end)
 
   const commit = () => {
     if (!current.length) return
@@ -55,7 +53,7 @@ export const groupWords = (
     current = []
   }
 
-  words.forEach((word) => {
+  sortedWords.forEach((word) => {
     if (!current.length) {
       current = [word]
       return
@@ -64,21 +62,10 @@ export const groupWords = (
     const previous = current[current.length - 1]
     const candidate = [...current, word]
     const candidateText = getGroupText(candidate)
-    const duration = word.end - current[0].start
-    const gap = word.start - previous.end
-    const shouldJoin =
-      isConnectorWord(previous.text) || isConnectorWord(word.text) || duration < safeSettings.minDuration
-    const exceedsLimits =
-      candidate.length > safeSettings.maxWords ||
-      candidateText.length > safeSettings.maxChars ||
-      gap > safeSettings.pauseThreshold
+    const exceedsHardLimits = candidateText.length > safeSettings.maxChars
+    const crossesBreakBoundary = hasBreakBoundaryBetween(previous, word, breakBoundaries)
 
-    if (shouldJoin && !exceedsLimits) {
-      current = candidate
-      return
-    }
-
-    if (current.length === 1 && isConnectorWord(current[0].text) && !exceedsLimits) {
+    if (!exceedsHardLimits && !crossesBreakBoundary) {
       current = candidate
       return
     }
@@ -88,5 +75,5 @@ export const groupWords = (
   })
 
   commit()
-  return normalizeGroupTimings(groups)
+  return normalizeGroupTimings(groups, { breakRanges })
 }

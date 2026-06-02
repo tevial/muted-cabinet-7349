@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import { Check, Gauge, Pause, Play, Plus, ScanText, Search, Trash2, WandSparkles } from 'lucide-react'
+import { Check, Pause, Play, ScanText, WandSparkles } from 'lucide-react'
 
 import { CaptionEditor } from '../../../components/CaptionEditor'
 import { CapCutMultitrackPreview } from '../../../components/CapCutMultitrackPreview'
@@ -12,13 +12,23 @@ import type {
   CapCutPatchSummary,
   CapCutProjectSummary,
 } from '../../../services/capcut/capcutClient'
-import type { CaptionGap } from '../../../domain/captions'
 import type { CapCutProjectImport, CapCutSourceCutBoundary, CapCutSourcePreview } from '../../../contracts/capcut'
-import { CaptionGapPanel } from './CaptionGapPanel'
+import { cx } from '../../../shared/ui/classNames'
+import { ui } from '../../../shared/ui/styles'
 import { CapCutProjectImportDialog } from './CapCutProjectImportDialog'
 import { CapCutProjectPatchDialog } from './CapCutProjectPatchDialog'
 import { CapCutSourceCutPanel } from './CapCutSourceCutPanel'
 import type { SilenceDetectionSettings } from '../model/silenceDetection'
+
+const playbackRateOptions = [
+  { value: 0.25, label: '0.2x' },
+  { value: 0.5, label: '0.5x' },
+  { value: 0.75, label: '0.7x' },
+  { value: 1, label: '1x' },
+  { value: 1.5, label: '1.5x' },
+  { value: 2, label: '2.0x' },
+  { value: 2.5, label: '2.5x' },
+] as const
 
 type CaptionWorkbenchScreenProps = {
   capCutAgent?: CapCutLocalAgentStatus
@@ -30,8 +40,8 @@ type CaptionWorkbenchScreenProps = {
   capCutSourceCutBoundary?: CapCutSourceCutBoundary
   capCutSourcePreview?: CapCutSourcePreview
   capCutSourcePreviewError?: string
-  captionGap?: CaptionGap
   groups: CaptionGroup[]
+  hasCaptionDraft: boolean
   totalGroups: number
   selectedGroupId?: string
   selectedSkipRegionId?: string
@@ -60,7 +70,14 @@ type CaptionWorkbenchScreenProps = {
   audioUrl?: string
   captionContainerRef: RefObject<HTMLDivElement | null>
   isTimelineReady: boolean
+  minimapControlRef: RefObject<HTMLDivElement | null>
+  minimapContainerRef: RefObject<HTMLDivElement | null>
+  minimapSelectionRef: RefObject<HTMLDivElement | null>
+  minimapViewportRef: RefObject<HTMLDivElement | null>
+  timelineSurfaceRef: RefObject<HTMLElement | null>
   timelineContainerRef: RefObject<HTMLDivElement | null>
+  timelineHoverGuideRef: RefObject<HTMLDivElement | null>
+  timelineHoverLabelRef: RefObject<HTMLSpanElement | null>
   timelineZoomConfig: {
     minPixelsPerSecond: number
     maxPixelsPerSecond: number
@@ -105,8 +122,6 @@ type CaptionWorkbenchScreenProps = {
   onCapCutImportRun: () => void
   onCapCutSourceCutClose: () => void
   onCapCutSourcePreviewLoad: () => void
-  onCaptionGapClose: () => void
-  onCaptionGapLink: () => void
   onCapCutPatchClose: () => void
   onCapCutPatchDryRun: () => void
   onCapCutPatchOpen: () => void
@@ -127,13 +142,14 @@ type CaptionWorkbenchScreenProps = {
   onAlignVisibleGroups: () => void
   onTimelineZoomChange: (pixelsPerSecond: number) => void
   onEditorSelect: (groupId: string) => void
+  onApplyCaptionDraft: () => void
+  onRevertCaptionDraft: () => void
   onGroupTextChange: (groupId: string, text: string) => void
   onGroupTimingChange: (groupId: string, start: number, end: number) => void
-  onSplitGroupAtCursor: (groupId: string, cursorIndex: number) => boolean
+  onMaxCharsChange: (maxChars: number) => void
+  onSplitGroupAtCursor: (groupId: string, cursorIndex: number, text: string) => boolean
   onMergeGroupWithPrevious: (groupId: string) => boolean
-  onPlayGroup: (groupId: string) => void
   onSplitGroup: (groupId: string) => void
-  onMergeGroupWithNext: (groupId: string) => void
   onLanguageChange: (language: string) => void
   onSettingsChange: (settings: GroupingSettings) => void
 }
@@ -148,14 +164,12 @@ export function CaptionWorkbenchScreen({
   capCutSourceCutBoundary,
   capCutSourcePreview,
   capCutSourcePreviewError,
-  captionGap,
   groups,
+  hasCaptionDraft,
   totalGroups,
   selectedGroupId,
-  selectedSkipRegionId,
   isPlaying,
   isTranscribing,
-  isAligningCaptions,
   isCapCutPatchBusy,
   isCapCutPatchOpen,
   isCapCutImportBusy,
@@ -165,12 +179,8 @@ export function CaptionWorkbenchScreen({
   canRedo,
   canExportCutManifest,
   canSaveProject,
-  canAlignCaptions,
-  canAlignSelectedCaption,
   canTranscribeKeptChunks,
-  alignmentProgressLabel,
   aligningGroupIds,
-  dirtyAlignmentCount,
   hasCachedTranscript,
   canUndo,
   detectedSilenceAdjustment,
@@ -178,16 +188,19 @@ export function CaptionWorkbenchScreen({
   audioUrl,
   captionContainerRef,
   isTimelineReady,
+  minimapControlRef,
+  minimapContainerRef,
+  minimapSelectionRef,
+  minimapViewportRef,
+  timelineSurfaceRef,
   timelineContainerRef,
-  timelineZoomConfig,
+  timelineHoverGuideRef,
+  timelineHoverLabelRef,
   playbackRate,
-  playbackRateLabel,
-  playbackSpeedConfig,
   silenceAdjustmentConfig,
   silenceDetectionSettingConfig,
   silenceDetectionSettings,
   waveformContainerRef,
-  zoomLabel,
   zoomLevel,
   language,
   stats,
@@ -195,8 +208,6 @@ export function CaptionWorkbenchScreen({
   timingNudgeStep,
   onFileChange,
   onLoadCachedTranscript,
-  onTranscribe,
-  onRegroup,
   onRedo,
   onSaveProject,
   onUndo,
@@ -207,8 +218,6 @@ export function CaptionWorkbenchScreen({
   onCapCutImportRun,
   onCapCutSourceCutClose,
   onCapCutSourcePreviewLoad,
-  onCaptionGapClose,
-  onCaptionGapLink,
   onCapCutPatchClose,
   onCapCutPatchDryRun,
   onCapCutPatchOpen,
@@ -217,52 +226,44 @@ export function CaptionWorkbenchScreen({
   onCapCutProjectsRefresh,
   onTogglePlayback,
   onPlaybackRateChange,
-  onAddSkipRegion,
   onConfirmDetectedSilentSkipRegions,
   onDetectedSilenceAdjustmentChange,
   onDetectSilentSkipRegions,
-  onDeleteSelectedSkipRegion,
   onSilenceDetectionSettingsChange,
   onTranscribeKeptChunks,
-  onAlignDirtyGroups,
-  onAlignSelectedGroup,
-  onAlignVisibleGroups,
-  onTimelineZoomChange,
   onEditorSelect,
+  onApplyCaptionDraft,
+  onRevertCaptionDraft,
   onGroupTextChange,
   onGroupTimingChange,
+  onMaxCharsChange,
   onSplitGroupAtCursor,
   onMergeGroupWithPrevious,
-  onPlayGroup,
   onSplitGroup,
-  onMergeGroupWithNext,
   onLanguageChange,
   onSettingsChange,
 }: CaptionWorkbenchScreenProps) {
   return (
-    <main className="app-shell">
+    <main className={ui.appShell}>
       <TopBar
-        canExport={totalGroups > 0}
+        canExport={totalGroups > 0 && !hasCaptionDraft}
         canExportCutManifest={canExportCutManifest}
         canRedo={canRedo}
         canSaveProject={canSaveProject}
-        canTranscribe={Boolean(audioUrl && !capCutProjectImport)}
         canUndo={canUndo}
         hasCachedTranscript={hasCachedTranscript}
-        isTranscribing={isTranscribing}
         settingsContent={
           <SettingsPanel
             language={language}
             stats={stats}
             settings={settings}
+            variant="popover"
             onLanguageChange={onLanguageChange}
             onChange={onSettingsChange}
           />
         }
         onFileChange={onFileChange}
         onLoadCachedTranscript={onLoadCachedTranscript}
-        onTranscribe={onTranscribe}
-        onRegroup={onRegroup}
         onRedo={onRedo}
         onSaveProject={onSaveProject}
         onUndo={onUndo}
@@ -303,192 +304,114 @@ export function CaptionWorkbenchScreen({
         onRefreshProjects={onCapCutProjectsRefresh}
       />
 
-      <section className="workspace">
-        <section className="main-stage">
-          <section className="playback-panel">
-            <button className="primary-button" type="button" onClick={onTogglePlayback}>
-              {isPlaying ? <Pause size={17} /> : <Play size={17} />}
-              {isPlaying ? 'Pause' : 'Play timeline'}
-            </button>
-
-            <label className="playback-rate-control" title="Playback speed">
-              <Gauge size={16} />
-              <span>Speed</span>
-              <input
-                type="range"
-                min={playbackSpeedConfig.minRate}
-                max={playbackSpeedConfig.maxRate}
-                step={playbackSpeedConfig.sliderStep}
-                value={playbackRate}
-                disabled={!audioUrl || !isTimelineReady}
-                onChange={(event) => onPlaybackRateChange(Number(event.target.value))}
-              />
-              <strong>{playbackRateLabel}</strong>
-            </label>
-
-            <div className="skip-zone-controls" aria-label="Skip zone actions">
+      <section className={ui.workspace}>
+        <section className={ui.mainStage}>
+          <section className={ui.playbackPanel}>
+            <div className={ui.timelineToolbarActions} aria-label="Timeline generation actions">
               <button
-                className="icon-button"
-                type="button"
-                title="Transcribe kept chunks between skip zones"
-                disabled={!audioUrl || !isTimelineReady || isTranscribing || !canTranscribeKeptChunks}
-                onClick={onTranscribeKeptChunks}
-              >
-                <ScanText size={16} />
-              </button>
-              <button
-                className="icon-button"
-                type="button"
-                title="Add skip zone at playhead"
-                disabled={!audioUrl || !isTimelineReady}
-                onClick={onAddSkipRegion}
-              >
-                <Plus size={16} />
-              </button>
-              <button
-                className="icon-button"
+                className={ui.timelineToolButton}
                 type="button"
                 title="Detect silent zones from waveform"
                 disabled={!audioUrl || !isTimelineReady}
                 onClick={onDetectSilentSkipRegions}
               >
-                <WandSparkles size={16} />
+                <WandSparkles size={22} />
               </button>
-              {hasDetectedSilenceDraft ? (
-                <>
-                  <label className="silence-setting-control" title="RMS floor for silence detection">
-                    <span>RMS</span>
-                    <input
-                      type="number"
-                      min={silenceDetectionSettingConfig.rmsThreshold.min}
-                      max={silenceDetectionSettingConfig.rmsThreshold.max}
-                      step={silenceDetectionSettingConfig.rmsThreshold.step}
-                      value={silenceDetectionSettings.rmsThreshold}
-                      disabled={!audioUrl || !isTimelineReady}
-                      onChange={(event) => onSilenceDetectionSettingsChange({ rmsThreshold: Number(event.target.value) })}
-                    />
-                  </label>
-                  <label className="silence-setting-control" title="Minimum final skip-zone duration">
-                    <span>Min gap</span>
-                    <input
-                      type="number"
-                      min={silenceDetectionSettingConfig.minDuration.min}
-                      max={silenceDetectionSettingConfig.minDuration.max}
-                      step={silenceDetectionSettingConfig.minDuration.step}
-                      value={silenceDetectionSettings.minDuration}
-                      disabled={!audioUrl || !isTimelineReady}
-                      onChange={(event) => onSilenceDetectionSettingsChange({ minDuration: Number(event.target.value) })}
-                    />
-                  </label>
-                  <label className="silence-setting-control" title="Speech guard added around detected audible regions">
-                    <span>Guard</span>
-                    <input
-                      type="number"
-                      min={silenceDetectionSettingConfig.speechPadding.min}
-                      max={silenceDetectionSettingConfig.speechPadding.max}
-                      step={silenceDetectionSettingConfig.speechPadding.step}
-                      value={silenceDetectionSettings.speechPadding}
-                      disabled={!audioUrl || !isTimelineReady}
-                      onChange={(event) => onSilenceDetectionSettingsChange({ speechPadding: Number(event.target.value) })}
-                    />
-                  </label>
-                  <label className="silence-normalize-control" title="Use local loudness normalization for uneven recordings">
-                    <input
-                      type="checkbox"
-                      checked={silenceDetectionSettings.adaptiveNormalization}
-                      disabled={!audioUrl || !isTimelineReady}
-                      onChange={(event) =>
-                        onSilenceDetectionSettingsChange({ adaptiveNormalization: event.target.checked })}
-                    />
-                    <span>Normalize</span>
-                  </label>
-                  <label className="silence-tune-control" title="Adjust detected silent zone boundaries">
-                    <input
-                      type="range"
-                      min={silenceAdjustmentConfig.min}
-                      max={silenceAdjustmentConfig.max}
-                      step={silenceAdjustmentConfig.step}
-                      value={detectedSilenceAdjustment}
-                      onChange={(event) => onDetectedSilenceAdjustmentChange(Number(event.target.value))}
-                    />
-                  </label>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Confirm detected silent zones"
-                    onClick={onConfirmDetectedSilentSkipRegions}
-                  >
-                    <Check size={16} />
-                  </button>
-                </>
-              ) : null}
               <button
-                className="icon-button"
+                className={ui.timelineToolButton}
                 type="button"
-                title="Delete selected skip zone"
-                disabled={!selectedSkipRegionId}
-                onClick={onDeleteSelectedSkipRegion}
+                title="Transcribe kept chunks between skip zones"
+                disabled={!audioUrl || !isTimelineReady || isTranscribing || !canTranscribeKeptChunks}
+                onClick={onTranscribeKeptChunks}
               >
-                <Trash2 size={16} />
+                <ScanText size={22} />
               </button>
             </div>
 
-            <div className="alignment-controls" aria-label="Caption alignment actions">
-              <button
-                className="ghost-button compact-action"
-                type="button"
-                title="Run MFA alignment for the selected caption group"
-                disabled={!canAlignSelectedCaption || isAligningCaptions}
-                onClick={onAlignSelectedGroup}
-              >
-                <ScanText size={16} />
-                {alignmentProgressLabel ?? 'Align selected'}
-              </button>
-              <button
-                className="ghost-button compact-action"
-                type="button"
-                title="Run MFA alignment for edited caption groups"
-                disabled={!dirtyAlignmentCount || !canAlignCaptions || isAligningCaptions}
-                onClick={onAlignDirtyGroups}
-              >
-                <WandSparkles size={16} />
-                Edited {dirtyAlignmentCount}
-              </button>
-              <button
-                className="ghost-button compact-action"
-                type="button"
-                title="Run MFA alignment for all visible caption groups"
-                disabled={!canAlignCaptions || isAligningCaptions}
-                onClick={onAlignVisibleGroups}
-              >
-                <Check size={16} />
-                Align all
-              </button>
-            </div>
-
-            <label className="zoom-control">
-              <Search size={16} />
-              <span>Time detail</span>
-              <input
-                type="range"
-                min={timelineZoomConfig.minPixelsPerSecond}
-                max={timelineZoomConfig.maxPixelsPerSecond}
-                step={timelineZoomConfig.sliderStep}
-                value={Math.round(zoomLevel)}
-                disabled={!audioUrl || !isTimelineReady}
-                onChange={(event) => onTimelineZoomChange(Number(event.target.value))}
-              />
-              <strong>{zoomLabel}</strong>
-            </label>
+            {hasDetectedSilenceDraft ? (
+              <div className={ui.timelineToolbarDraft} aria-label="Detected silence settings">
+                <label className={ui.silenceSettingControl} title="RMS floor for silence detection">
+                  <span>RMS</span>
+                  <input
+                    className={ui.silenceSettingInput}
+                    type="number"
+                    min={silenceDetectionSettingConfig.rmsThreshold.min}
+                    max={silenceDetectionSettingConfig.rmsThreshold.max}
+                    step={silenceDetectionSettingConfig.rmsThreshold.step}
+                    value={silenceDetectionSettings.rmsThreshold}
+                    disabled={!audioUrl || !isTimelineReady}
+                    onChange={(event) => onSilenceDetectionSettingsChange({ rmsThreshold: Number(event.target.value) })}
+                  />
+                </label>
+                <label className={ui.silenceSettingControl} title="Minimum final skip-zone duration">
+                  <span>Min gap</span>
+                  <input
+                    className={ui.silenceSettingInput}
+                    type="number"
+                    min={silenceDetectionSettingConfig.minDuration.min}
+                    max={silenceDetectionSettingConfig.minDuration.max}
+                    step={silenceDetectionSettingConfig.minDuration.step}
+                    value={silenceDetectionSettings.minDuration}
+                    disabled={!audioUrl || !isTimelineReady}
+                    onChange={(event) => onSilenceDetectionSettingsChange({ minDuration: Number(event.target.value) })}
+                  />
+                </label>
+                <label className={ui.silenceSettingControl} title="Speech guard added around detected audible regions">
+                  <span>Guard</span>
+                  <input
+                    className={ui.silenceSettingInput}
+                    type="number"
+                    min={silenceDetectionSettingConfig.speechPadding.min}
+                    max={silenceDetectionSettingConfig.speechPadding.max}
+                    step={silenceDetectionSettingConfig.speechPadding.step}
+                    value={silenceDetectionSettings.speechPadding}
+                    disabled={!audioUrl || !isTimelineReady}
+                    onChange={(event) => onSilenceDetectionSettingsChange({ speechPadding: Number(event.target.value) })}
+                  />
+                </label>
+                <label className={ui.silenceNormalizeControl} title="Use local loudness normalization for uneven recordings">
+                  <input
+                    className={ui.silenceNormalizeInput}
+                    type="checkbox"
+                    checked={silenceDetectionSettings.adaptiveNormalization}
+                    disabled={!audioUrl || !isTimelineReady}
+                    onChange={(event) =>
+                      onSilenceDetectionSettingsChange({ adaptiveNormalization: event.target.checked })}
+                  />
+                  <span>Normalize</span>
+                </label>
+                <label className={ui.silenceTuneControl} title="Adjust detected silent zone boundaries">
+                  <input
+                    className={ui.silenceTuneInput}
+                    type="range"
+                    min={silenceAdjustmentConfig.min}
+                    max={silenceAdjustmentConfig.max}
+                    step={silenceAdjustmentConfig.step}
+                    value={detectedSilenceAdjustment}
+                    onChange={(event) => onDetectedSilenceAdjustmentChange(Number(event.target.value))}
+                  />
+                </label>
+                <button
+                  className={ui.timelineToolButton}
+                  type="button"
+                  title="Confirm detected silent zones"
+                  onClick={onConfirmDetectedSilentSkipRegions}
+                >
+                  <Check size={22} />
+                </button>
+              </div>
+            ) : null}
           </section>
 
-          <section className="timeline-stack">
+          <section className={ui.timelineStack}>
             {capCutProjectImport ? (
-              <section className="capcut-import-summary" aria-label="Imported CapCut project summary">
-                <strong>{capCutProjectImport.timelineMap.tracks.length} tracks</strong>
-                <span>{capCutProjectImport.timelineMap.materials.length} media refs</span>
-                <span>{capCutProjectImport.timelineMap.sourceCutBoundaries.length} source cuts</span>
-                <span>{capCutProjectImport.timelineMap.markers.length} markers</span>
+              <section className={ui.importSummary} aria-label="Imported CapCut project summary">
+                <strong className="text-heading">{capCutProjectImport.timelineMap.tracks.length} tracks</strong>
+                <span className={ui.importSummaryPill}>{capCutProjectImport.timelineMap.materials.length} media refs</span>
+                <span className={ui.importSummaryPill}>
+                  {capCutProjectImport.timelineMap.sourceCutBoundaries.length} source cuts
+                </span>
+                <span className={ui.importSummaryPill}>{capCutProjectImport.timelineMap.markers.length} markers</span>
               </section>
             ) : null}
             <CapCutSourceCutPanel
@@ -499,37 +422,73 @@ export function CaptionWorkbenchScreen({
               onClose={onCapCutSourceCutClose}
               onLoadPreview={onCapCutSourcePreviewLoad}
             />
-            <CaptionGapPanel
-              gap={captionGap}
-              onClose={onCaptionGapClose}
-              onLink={onCaptionGapLink}
-            />
             {capCutProjectImport ? (
               <CapCutMultitrackPreview stems={capCutProjectImport.stems} zoomLevel={zoomLevel} />
             ) : null}
             <WaveSurferTimeline
               audioUrl={audioUrl}
               captionContainerRef={captionContainerRef}
+              minimapControlRef={minimapControlRef}
+              minimapContainerRef={minimapContainerRef}
+              minimapSelectionRef={minimapSelectionRef}
+              minimapViewportRef={minimapViewportRef}
+              timelineSurfaceRef={timelineSurfaceRef}
               timelineContainerRef={timelineContainerRef}
+              timelineHoverGuideRef={timelineHoverGuideRef}
+              timelineHoverLabelRef={timelineHoverLabelRef}
+              timelineGridStepPx={zoomLevel}
               waveformContainerRef={waveformContainerRef}
             />
+            <div className={ui.timelineTransport} aria-label="Timeline playback controls">
+              <button
+                className={ui.timelinePlayButton}
+                type="button"
+                aria-label={isPlaying ? 'Pause timeline' : 'Play timeline'}
+                disabled={!audioUrl || !isTimelineReady}
+                onClick={onTogglePlayback}
+              >
+                {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+              </button>
+              <div className={ui.timelineSpeedPicker} aria-label="Playback speed">
+                {playbackRateOptions.map((option) => {
+                  const isSelected = Math.abs(playbackRate - option.value) < 0.001
+
+                  return (
+                    <button
+                      key={option.value}
+                      className={cx(ui.timelineSpeedOption, isSelected && ui.timelineSpeedOptionSelected)}
+                      type="button"
+                      aria-pressed={isSelected}
+                      data-selected={isSelected ? 'true' : 'false'}
+                      disabled={!audioUrl || !isTimelineReady}
+                      onClick={() => onPlaybackRateChange(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           </section>
         </section>
 
-        <div className="right-rail">
+        <div className={ui.rightRail}>
           <CaptionEditor
             aligningGroupIds={aligningGroupIds}
             groups={groups}
+            hasDraft={hasCaptionDraft}
+            maxChars={settings.maxChars}
             selectedGroupId={selectedGroupId}
             totalGroups={totalGroups}
+            onApplyDraft={onApplyCaptionDraft}
+            onMaxCharsChange={onMaxCharsChange}
+            onRevertDraft={onRevertCaptionDraft}
             onSelect={onEditorSelect}
             onTextChange={onGroupTextChange}
             onTimingChange={onGroupTimingChange}
             onSplitAtCursor={onSplitGroupAtCursor}
             onMergePrevious={onMergeGroupWithPrevious}
-            onPlayGroup={onPlayGroup}
             onSplit={onSplitGroup}
-            onMergeNext={onMergeGroupWithNext}
             timingNudgeStep={timingNudgeStep}
           />
         </div>

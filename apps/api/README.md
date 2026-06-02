@@ -13,11 +13,12 @@ helpers for transcription, regrouping, and SRT export.
   alignment. It keeps the external `mfa align_one` CLI and JSON parsing behind a
   separate backend boundary.
 - `app/audio_processing.py` owns shared `ffmpeg`/`ffprobe` helpers used by
-  transcription and alignment.
+  source-video audio extraction, transcription, and alignment.
 - `app/captioning.py` owns server-side caption grouping and SRT helpers.
 - `app/capcut_draft.py` owns CapCut draft inspection, dry-run patch planning,
-  caption remapping, video segment rewriting, subtitle material generation, and
-  timestamped backups.
+  caption remapping, CapCut-safe caption export cleanup, media segment
+  rewriting across the original video/audio segments, subtitle material
+  generation, and timestamped backups.
 - `app/capcut_timeline.py` owns CapCut project import: normalized timeline-map
   extraction, marker/source-cut projection, per-track ffmpeg stem rendering, and
   hidden source-range previews.
@@ -27,11 +28,15 @@ helpers for transcription, regrouping, and SRT export.
 - `POST /api/transcribe/segments` accepts one media upload plus a JSON ranges
   form field. It transcribes selected ranges with bounded server-side
   parallelism, avoiding repeated browser uploads of the same source file.
+- `POST /api/media/extract-audio` accepts a source video upload and returns the
+  first audio stream as a 96k MP3 editor audio file for browser playback,
+  fingerprinting, transcription, and alignment.
 - `POST /api/align/segment` accepts one media upload, a selected time range, and
   known caption text, then asks MFA to refine word intervals for that segment.
 - `POST /api/capcut/inspect` reads a draft folder and reports support details.
-- `POST /api/capcut/patch-dry-run` previews the video segment and subtitle
-  rewrite without writing files.
+- `POST /api/capcut/patch-dry-run` previews the media segment and subtitle
+  rewrite without writing files, including caption cleanup diagnostics for short
+  or overlapping subtitle fragments.
 - `POST /api/capcut/patch` applies the same rewrite to the original draft after
   creating `.capcut-caption.<timestamp>.bak` backups for every rewritten file.
 - `POST /api/capcut/timeline-map` returns the normalized project structure

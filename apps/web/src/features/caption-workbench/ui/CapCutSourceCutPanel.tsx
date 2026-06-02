@@ -2,6 +2,8 @@ import { ExternalLink, Loader2, X } from 'lucide-react'
 
 import type { CapCutSourceCutBoundary, CapCutSourcePreview } from '../../../contracts/capcut'
 import { formatSeconds } from '../../../domain/captions'
+import { cx } from '../../../shared/ui/classNames'
+import { ui } from '../../../shared/ui/styles'
 
 type CapCutSourceCutPanelProps = {
   boundary?: CapCutSourceCutBoundary
@@ -25,48 +27,51 @@ export function CapCutSourceCutPanel({
   if (!boundary) return null
 
   return (
-    <section className="timeline-object-panel capcut-source-cut-panel" aria-label="Selected CapCut source cut">
-      <div className="timeline-object-header">
-        <div>
-          <span>Source cut</span>
-          <strong>{formatSeconds(boundary.projectPosition)}</strong>
+    <section
+      className={cx(ui.timelineObjectPanel, ui.sourceCutPanel, '[--timeline-object-accent:#6f4bbe] [--timeline-object-detail-border:#e4ddee]')}
+      aria-label="Selected CapCut source cut"
+    >
+      <div className={ui.timelineObjectHeader}>
+        <div className={ui.timelineObjectHeaderInfo}>
+          <span className={ui.timelineObjectLabel}>Source cut</span>
+          <strong className={ui.timelineObjectTime}>{formatSeconds(boundary.projectPosition)}</strong>
         </div>
-        <button className="icon-button" type="button" title="Close source cut" onClick={onClose}>
+        <button className={ui.iconButton} type="button" title="Close source cut" onClick={onClose}>
           <X size={16} />
         </button>
       </div>
 
-      <dl className="timeline-object-details">
-        <div>
-          <dt>Hidden source</dt>
-          <dd>
+      <dl className={ui.timelineObjectDetails}>
+        <div className={ui.timelineObjectDetailCard}>
+          <dt className={ui.timelineObjectDetailTerm}>Hidden source</dt>
+          <dd className={ui.timelineObjectDetailValue}>
             {formatSeconds(boundary.hiddenSourceStart)} - {formatSeconds(boundary.hiddenSourceEnd)}
           </dd>
         </div>
-        <div>
-          <dt>Duration</dt>
-          <dd>{formatSeconds(boundary.hiddenDuration)}</dd>
+        <div className={ui.timelineObjectDetailCard}>
+          <dt className={ui.timelineObjectDetailTerm}>Duration</dt>
+          <dd className={ui.timelineObjectDetailValue}>{formatSeconds(boundary.hiddenDuration)}</dd>
         </div>
-        <div>
-          <dt>Media</dt>
-          <dd title={boundary.mediaPath}>{boundary.materialName || getSourceName(boundary.mediaPath)}</dd>
+        <div className={ui.timelineObjectDetailCard}>
+          <dt className={ui.timelineObjectDetailTerm}>Media</dt>
+          <dd className={ui.timelineObjectDetailValue} title={boundary.mediaPath}>{boundary.materialName || getSourceName(boundary.mediaPath)}</dd>
         </div>
       </dl>
 
-      <div className="timeline-object-actions">
-        <button className="ghost-button" type="button" disabled={isLoadingPreview} onClick={onLoadPreview}>
+      <div className={ui.timelineObjectActions}>
+        <button className={ui.ghostButton} type="button" disabled={isLoadingPreview} onClick={onLoadPreview}>
           {isLoadingPreview ? <Loader2 size={16} /> : <ExternalLink size={16} />}
           {isLoadingPreview ? 'Rendering preview' : 'Preview hidden range'}
         </button>
       </div>
 
-      {error ? <p className="capcut-patch-error">{error}</p> : null}
+      {error ? <p className={ui.errorText}>{error}</p> : null}
 
       {preview ? (
-        <audio className="source-cut-audio" src={preview.url} controls preload="metadata" />
+        <audio className={ui.sourceCutAudio} src={preview.url} controls preload="metadata" />
       ) : null}
 
-      <p className="source-cut-note">Restore is not available yet; this stage is preview-only.</p>
+      <p className={ui.sourceCutNote}>Restore is not available yet; this stage is preview-only.</p>
     </section>
   )
 }

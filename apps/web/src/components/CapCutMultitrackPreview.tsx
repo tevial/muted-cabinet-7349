@@ -3,6 +3,8 @@ import MultiTrack, { type TrackOptions } from 'wavesurfer-multitrack'
 
 import type { CapCutAudioStem } from '../contracts/capcut'
 import { formatTimelineLabel, timelineZoomConfig } from '../features/caption-workbench/model/waveSurferTimelineConfig'
+import { cx } from '../shared/ui/classNames'
+import { ui } from '../shared/ui/styles'
 
 type CapCutMultitrackPreviewProps = {
   stems: CapCutAudioStem[]
@@ -19,8 +21,6 @@ const toTrackOptions = (stem: CapCutAudioStem, index: number): TrackOptions => (
     height: 56,
     waveColor: index % 2 === 0 ? '#cfe5df' : '#d9d7ef',
     progressColor: index % 2 === 0 ? '#14927f' : '#6f4bbe',
-    barGap: 1,
-    barWidth: 2,
     normalize: true,
   },
 })
@@ -70,12 +70,12 @@ export function CapCutMultitrackPreview({ stems, zoomLevel }: CapCutMultitrackPr
   if (stems.length < 2) return null
 
   return (
-    <section className="capcut-multitrack-preview" data-ready={isReady ? 'true' : 'false'}>
-      <div className="capcut-multitrack-title">
+    <section className={cx(ui.multitrackPreview, !isReady && 'opacity-60')} data-ready={isReady ? 'true' : 'false'}>
+      <div className={ui.multitrackTitle}>
         <strong>Multitrack stems</strong>
-        <span>{stems.length} synced tracks</span>
+        <span className={ui.multitrackTitleMeta}>{stems.length} synced tracks</span>
       </div>
-      <div ref={containerRef} className="capcut-multitrack-host" />
+      <div ref={containerRef} className={ui.multitrackHost} />
     </section>
   )
 }

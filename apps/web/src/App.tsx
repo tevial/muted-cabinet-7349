@@ -1,4 +1,3 @@
-import './App.css'
 import { CaptionWorkbench } from './features/caption-workbench/CaptionWorkbench'
 
 function App() {

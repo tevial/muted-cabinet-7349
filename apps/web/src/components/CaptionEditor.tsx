@@ -1,37 +1,45 @@
 import { useEffect, useRef, type MouseEvent } from 'react'
-import { Combine, Play, Scissors } from 'lucide-react'
+import { Check, RotateCcw, Scissors } from 'lucide-react'
 
 import type { CaptionGroup } from '../types'
+import { cx } from '../shared/ui/classNames'
+import { ui } from '../shared/ui/styles'
 
 type CaptionEditorProps = {
   groups: CaptionGroup[]
   aligningGroupIds?: string[]
+  hasDraft?: boolean
+  maxChars: number
   selectedGroupId?: string
   totalGroups?: number
+  onApplyDraft: () => void
+  onMaxCharsChange: (maxChars: number) => void
+  onRevertDraft: () => void
   onSelect: (groupId: string) => void
   onTextChange: (groupId: string, text: string) => void
   onTimingChange: (groupId: string, start: number, end: number) => void
-  onSplitAtCursor: (groupId: string, cursorIndex: number) => boolean
+  onSplitAtCursor: (groupId: string, cursorIndex: number, text: string) => boolean
   onMergePrevious: (groupId: string) => boolean
-  onPlayGroup: (groupId: string) => void
   onSplit: (groupId: string) => void
-  onMergeNext: (groupId: string) => void
   timingNudgeStep: number
 }
 
 export function CaptionEditor({
   groups,
   aligningGroupIds = [],
+  hasDraft = false,
+  maxChars,
   selectedGroupId,
   totalGroups,
+  onApplyDraft,
+  onMaxCharsChange,
+  onRevertDraft,
   onSelect,
   onTextChange,
   onTimingChange,
   onSplitAtCursor,
   onMergePrevious,
-  onPlayGroup,
   onSplit,
-  onMergeNext,
   timingNudgeStep,
 }: CaptionEditorProps) {
   const rowRefs = useRef(new Map<string, HTMLElement>())
@@ -70,16 +78,42 @@ export function CaptionEditor({
   }, [selectedGroupId])
 
   return (
-    <section className="editor-panel">
-      <div className="section-title-row">
+    <section className={ui.editorPanel}>
+      <div className={ui.sectionTitleRow}>
         <div>
-          <p className="panel-kicker">Blocks</p>
-          <h2>Caption groups</h2>
+          <p className={ui.sectionKicker}>Blocks</p>
+          <h2 className={ui.sectionTitle}>Caption groups</h2>
         </div>
-        <span>{groupCountLabel}</span>
+        <div className={ui.captionHeaderControls}>
+          <label className={ui.maxCharsControl}>
+            <span>Max chars</span>
+            <input
+              className={ui.maxCharsInput}
+              type="number"
+              min={8}
+              value={maxChars}
+              onChange={(event) => onMaxCharsChange(Number(event.target.value))}
+              aria-label="Maximum caption characters"
+            />
+          </label>
+          <span className={ui.captionCount}>{groupCountLabel}</span>
+        </div>
       </div>
+      {hasDraft ? (
+        <div className={ui.captionDraftActions}>
+          <span className={ui.captionDraftLabel}>Draft changes</span>
+          <button className={cx(ui.ghostButton, ui.captionDraftButton)} type="button" onClick={onRevertDraft}>
+            <RotateCcw size={14} />
+            Revert
+          </button>
+          <button className={cx(ui.primaryButton, ui.captionDraftButton)} type="button" onClick={onApplyDraft}>
+            <Check size={14} />
+            Update groups
+          </button>
+        </div>
+      ) : null}
 
-      <div className="group-list">
+      <div className={ui.groupList}>
         {groups.map((group) => {
           const isSelected = group.id === selectedGroupId
           const textValue = group.textOverride ?? group.text
@@ -97,12 +131,17 @@ export function CaptionEditor({
 
                 rowRefs.current.delete(group.id)
               }}
-              className={`caption-row ${isSelected ? 'selected' : ''} ${isPending || isAligning ? 'pending' : ''}`}
+              className={cx(
+                ui.captionRow,
+                isSelected && ui.captionRowSelected,
+                (isPending || isAligning) && ui.captionRowPending,
+              )}
               onClick={() => onSelect(group.id)}
             >
-              <div className="caption-row-time">
-                <label className="time-field" title="Start time">
+              <div className={ui.captionRowTime}>
+                <label className="block" title="Start time">
                   <input
+                    className={ui.captionTimeInput}
                     type="number"
                     min={0}
                     step={timingNudgeStep}
@@ -116,6 +155,7 @@ export function CaptionEditor({
               </div>
 
               <input
+                className={cx(ui.captionTextInput, (isPending || isAligning) && ui.captionPendingInput)}
                 ref={(node) => {
                   if (node) {
                     textInputRefs.current.set(group.id, node)
@@ -130,7 +170,7 @@ export function CaptionEditor({
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault()
-                    if (onSplitAtCursor(group.id, event.currentTarget.selectionStart ?? textValue.length)) {
+                    if (onSplitAtCursor(group.id, event.currentTarget.selectionStart ?? textValue.length, textValue)) {
                       pendingTextFocusRef.current = 'start'
                     }
                     return
@@ -148,30 +188,16 @@ export function CaptionEditor({
                 aria-label={`Caption text ${group.id}`}
               />
 
-              <div className="row-actions">
+              <span className={ui.captionRowFade} aria-hidden="true" />
+              <div className={ui.rowActions}>
                 <button
-                  type="button"
-                  title="Play this group"
-                  disabled={isPending || isAligning}
-                  onClick={(event) => runRowAction(event, () => onPlayGroup(group.id))}
-                >
-                  <Play size={15} />
-                </button>
-                <button
+                  className={ui.rowActionButton}
                   type="button"
                   title="Split this group"
                   disabled={isPending || isAligning}
                   onClick={(event) => runRowAction(event, () => onSplit(group.id))}
                 >
                   <Scissors size={15} />
-                </button>
-                <button
-                  type="button"
-                  title="Merge with next group"
-                  disabled={isPending || isAligning}
-                  onClick={(event) => runRowAction(event, () => onMergeNext(group.id))}
-                >
-                  <Combine size={15} />
                 </button>
               </div>
             </article>

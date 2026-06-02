@@ -8,8 +8,8 @@
 | FR-002 | Compute a stable local fingerprint for cache lookup. | Must | Fingerprint includes bytes and file size. |
 | FR-003 | Show cache availability without automatically consuming paid API tokens. | Must | `Load Cache` and `Transcribe` are separate actions. |
 | FR-004 | Transcribe source media with word-level timestamps. | Must | API server owns provider integration; `auto` uses Stable-ts first and OpenAI as fallback. |
-| FR-005 | Build caption groups from words using deterministic local rules. | Must | Provider groups are not durable editor source. |
-| FR-006 | Let users edit group text, split/merge groups, and nudge timing boundaries. | Must | Word timestamps remain unchanged by group edits. |
+| FR-005 | Build caption groups from words using deterministic local character-wrap rules. | Must | Provider groups are not durable editor source; active skip zones are hard grouping boundaries. |
+| FR-006 | Let users stage group text edits, split/merge groups, apply the draft to words, and nudge timing boundaries. | Must | Word timestamps are preserved until explicit alignment updates them. |
 | FR-007 | Loop selected group playback and play full timeline from playhead. | Must | Keyboard workflow is primary. |
 | FR-008 | Export current groups as SRT. | Must | CapCut draft rewrite export is future work. |
 | FR-009 | Log transcription/cache/group ingest data flow for debugging. | Should | Console tables are acceptable during active development. |

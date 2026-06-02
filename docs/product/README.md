@@ -7,8 +7,8 @@ This file is the project-specific context for `CapCut Caption`.
 CapCut Caption is a local desktop-first caption editor for creators who need
 short, precisely timed subtitle blocks for CapCut projects. The app uploads an
 audio or video source, obtains word-level transcription data, groups words into
-1-3 word caption blocks, lets the user adjust text/timing, and exports subtitle
-data that CapCut can ingest.
+short character-wrapped caption blocks, lets the user adjust text/timing, and
+exports subtitle data that CapCut can ingest.
 
 ## Goals
 
@@ -34,6 +34,7 @@ data that CapCut can ingest.
 - Load cached transcription or run fresh transcription.
 - Ingest transcription words into deterministic caption groups.
 - Regroup after caption rule changes.
+- Stage caption text edits as a draft, then apply them back into the word layer.
 - Adjust group text and start/end boundaries.
 - Preview full timeline or selected caption group.
 - Export SRT.
@@ -46,7 +47,8 @@ data that CapCut can ingest.
   main timeline id.
 - Caption word: one recognized word with start/end timestamps.
 - Caption group: one subtitle block containing one or more caption words.
-- Grouping settings: deterministic rules used to rebuild groups from words.
+- Grouping settings: deterministic character-wrap rules used to rebuild groups
+  from words, with active skip zones acting as hard boundaries in the editor.
 - Transcription cache: browser-local copy of transcription data for one
   fingerprint/language pair.
 - Saved project: browser-local editor state including words, groups, settings,

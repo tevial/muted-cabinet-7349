@@ -12,7 +12,11 @@ from typing import Any
 
 MICROSECONDS = 1_000_000
 MIN_RANGE_SECONDS = 0.001
+CAPCUT_CAPTION_FRAME_RATE = 30
+MIN_CAPCUT_CAPTION_SECONDS = 2 / CAPCUT_CAPTION_FRAME_RATE
+CAPCUT_TIMESTAMP_EPSILON = 0.000001
 DEFAULT_TEXT_RENDER_INDEX = 14_000
+MEDIA_TRACK_TYPES = {"audio", "video"}
 
 
 class CapCutDraftError(RuntimeError):
@@ -34,6 +38,15 @@ class CaptionPatch:
     text: str
     start: float
     end: float
+
+
+@dataclass(frozen=True)
+class CaptionSanitizerStats:
+    input_segments: int
+    output_segments: int
+    dropped_short_segments: int
+    trimmed_overlaps: int
+    dropped_after_overlap_trim: int
 
 
 @dataclass(frozen=True)
@@ -197,11 +210,10 @@ def _build_patch(
 
     patched_draft = copy.deepcopy(draft)
     patched_meta = copy.deepcopy(meta)
-    video_track = _get_primary_video_track(patched_draft)
-    source_segment = video_track["segments"][0]
-    video_track["segments"] = _build_video_segments(source_segment, normalized_kept_ranges)
+    for media_track in _get_media_tracks(patched_draft):
+        media_track["segments"] = _build_media_segments(media_track.get("segments") or [], normalized_kept_ranges)
 
-    rendered_captions = _render_captions(captions, normalized_kept_ranges)
+    rendered_captions, caption_sanitizer_stats = _render_captions(captions, normalized_kept_ranges)
     _replace_text_captions(patched_draft, rendered_captions)
 
     output_duration_us = sum(_seconds_to_us(item.duration) for item in normalized_kept_ranges)
@@ -213,6 +225,7 @@ def _build_patch(
         "meta": patched_meta,
         "keptRanges": normalized_kept_ranges,
         "captions": rendered_captions,
+        "captionSanitizer": caption_sanitizer_stats,
         "outputDurationUs": output_duration_us,
         "inputDuration": source_duration,
     }
@@ -224,18 +237,29 @@ def _validate_supported_draft(draft: dict[str, Any], *, allow_text: bool) -> lis
     if not isinstance(tracks, list):
         return ["draft_info.json is missing tracks."]
 
-    video_tracks = [track for track in tracks if track.get("type") == "video"]
-    if len(video_tracks) != 1:
-        errors.append(f"Expected exactly one video track, found {len(video_tracks)}.")
-    elif len(video_tracks[0].get("segments") or []) != 1:
-        errors.append("Expected the video track to contain exactly one segment.")
-    elif video_tracks[0]["segments"][0].get("speed") != 1:
-        errors.append("Only speed=1 video segments are supported.")
+    media_tracks = [track for track in tracks if track.get("type") in MEDIA_TRACK_TYPES]
+    media_segments = [
+        segment
+        for track in media_tracks
+        for segment in (track.get("segments") or [])
+    ]
+    if not media_tracks:
+        errors.append("Expected at least one media track.")
+    if not media_segments:
+        errors.append("Expected at least one media segment.")
+    for segment in media_segments:
+        if abs(_get_segment_speed(segment) - 1.0) > CAPCUT_TIMESTAMP_EPSILON:
+            errors.append("Only speed=1 media segments are supported.")
+            break
+        if _get_segment_target_range(segment).duration < MIN_RANGE_SECONDS:
+            errors.append(f"Media segment {segment.get('id')} is missing a valid target_timerange.")
+        if _get_segment_source_range(segment).duration < MIN_RANGE_SECONDS:
+            errors.append(f"Media segment {segment.get('id')} is missing a valid source_timerange.")
 
     unsupported_tracks = [
         track.get("type")
         for track in tracks
-        if track.get("type") not in {"video", "text"}
+        if track.get("type") not in MEDIA_TRACK_TYPES | {"text"}
     ]
     if unsupported_tracks:
         errors.append(f"Unsupported track types: {', '.join(map(str, unsupported_tracks))}.")
@@ -243,9 +267,6 @@ def _validate_supported_draft(draft: dict[str, Any], *, allow_text: bool) -> lis
     text_tracks = [track for track in tracks if track.get("type") == "text"]
     if text_tracks and not allow_text:
         errors.append("Text tracks are not allowed in this patch mode.")
-    if len(text_tracks) > 1:
-        errors.append(f"Expected at most one text track, found {len(text_tracks)}.")
-
     material_ids = {
         segment.get("material_id")
         for track in text_tracks
@@ -259,14 +280,20 @@ def _validate_supported_draft(draft: dict[str, Any], *, allow_text: bool) -> lis
         material = text_materials.get(material_id)
         if not material:
             errors.append(f"Text segment references missing material {material_id}.")
-        elif material.get("type") != "subtitle":
-            errors.append("Only subtitle text materials are supported.")
 
     return errors
 
 
-def _get_primary_video_track(draft: dict[str, Any]) -> dict[str, Any]:
-    return next(track for track in draft["tracks"] if track.get("type") == "video")
+def _get_media_tracks(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    return [track for track in draft["tracks"] if track.get("type") in MEDIA_TRACK_TYPES]
+
+
+def _get_video_tracks(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    return [track for track in draft["tracks"] if track.get("type") == "video"]
+
+
+def _get_audio_tracks(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    return [track for track in draft["tracks"] if track.get("type") == "audio"]
 
 
 def _resolve_kept_ranges(
@@ -318,34 +345,72 @@ def _subtract_ranges(base: TimeRange, cuts: list[TimeRange]) -> list[TimeRange]:
     return [item for item in kept if item.duration >= MIN_RANGE_SECONDS]
 
 
-def _build_video_segments(source_segment: dict[str, Any], kept_ranges: list[TimeRange]) -> list[dict[str, Any]]:
-    source_timerange = source_segment.get("source_timerange") or {}
-    target_timerange = source_segment.get("target_timerange") or {}
-    source_base = _us_to_seconds(source_timerange.get("start", 0))
-    target_base = _us_to_seconds(target_timerange.get("start", 0))
-    accumulated_us = 0
+def _build_media_segments(source_segments: list[dict[str, Any]], kept_ranges: list[TimeRange]) -> list[dict[str, Any]]:
     segments: list[dict[str, Any]] = []
 
-    for kept_range in kept_ranges:
-        segment = copy.deepcopy(source_segment)
-        duration_us = _seconds_to_us(kept_range.duration)
-        segment["id"] = _uuid()
-        segment["source_timerange"] = {
-            "start": _seconds_to_us(source_base + kept_range.start - target_base),
-            "duration": duration_us,
-        }
-        segment["target_timerange"] = {
-            "start": accumulated_us,
-            "duration": duration_us,
-        }
-        segment["render_timerange"] = {"start": 0, "duration": 0}
-        segments.append(segment)
-        accumulated_us += duration_us
+    for source_segment in sorted(source_segments, key=_segment_target_sort_key):
+        source_range = _get_segment_source_range(source_segment)
+        target_range = _get_segment_target_range(source_segment)
+        speed = _get_segment_speed(source_segment)
+
+        for kept_range in kept_ranges:
+            intersection = _intersect_ranges(target_range, kept_range)
+            if intersection is None:
+                continue
+
+            segment = copy.deepcopy(source_segment)
+            source_offset = (intersection.start - target_range.start) * speed
+            segment["id"] = _uuid()
+            segment["source_timerange"] = {
+                "start": _seconds_to_us(source_range.start + source_offset),
+                "duration": _seconds_to_us(intersection.duration * speed),
+            }
+            segment["target_timerange"] = {
+                "start": _seconds_to_us(_map_source_time_to_cut_time(intersection.start, kept_ranges)),
+                "duration": _seconds_to_us(intersection.duration),
+            }
+            segment["render_timerange"] = {"start": 0, "duration": 0}
+            segments.append(segment)
 
     return segments
 
 
-def _render_captions(captions: list[CaptionPatch], kept_ranges: list[TimeRange]) -> list[CaptionPatch]:
+def _segment_target_sort_key(segment: dict[str, Any]) -> tuple[float, float]:
+    target_range = _get_segment_target_range(segment)
+    return target_range.start, target_range.end
+
+
+def _get_segment_source_range(segment: dict[str, Any]) -> TimeRange:
+    timerange = segment.get("source_timerange") or {}
+    start = _us_to_seconds(timerange.get("start", 0))
+    return TimeRange(start, start + _us_to_seconds(timerange.get("duration", 0)))
+
+
+def _get_segment_target_range(segment: dict[str, Any]) -> TimeRange:
+    timerange = segment.get("target_timerange") or {}
+    start = _us_to_seconds(timerange.get("start", 0))
+    return TimeRange(start, start + _us_to_seconds(timerange.get("duration", 0)))
+
+
+def _get_segment_speed(segment: dict[str, Any]) -> float:
+    try:
+        return float(segment.get("speed", 1))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _intersect_ranges(left: TimeRange, right: TimeRange) -> TimeRange | None:
+    start = max(left.start, right.start)
+    end = min(left.end, right.end)
+    if end - start < MIN_RANGE_SECONDS:
+        return None
+    return TimeRange(start, end)
+
+
+def _render_captions(
+    captions: list[CaptionPatch],
+    kept_ranges: list[TimeRange],
+) -> tuple[list[CaptionPatch], CaptionSanitizerStats]:
     rendered: list[CaptionPatch] = []
 
     for caption in captions:
@@ -365,8 +430,56 @@ def _render_captions(captions: list[CaptionPatch], kept_ranges: list[TimeRange])
                 )
             )
 
-    rendered.sort(key=lambda item: (item.start, item.end, item.text))
-    return rendered
+    return _sanitize_capcut_captions(rendered)
+
+
+def _sanitize_capcut_captions(
+    captions: list[CaptionPatch],
+    min_duration: float = MIN_CAPCUT_CAPTION_SECONDS,
+) -> tuple[list[CaptionPatch], CaptionSanitizerStats]:
+    normalized: list[CaptionPatch] = []
+    dropped_short_segments = 0
+    trimmed_overlaps = 0
+    dropped_after_overlap_trim = 0
+
+    for caption in captions:
+        text = caption.text.strip()
+        if not text:
+            continue
+        start = _round_seconds(max(0.0, caption.start))
+        end = _round_seconds(max(start, caption.end))
+        if end - start < min_duration:
+            dropped_short_segments += 1
+            continue
+        normalized.append(CaptionPatch(text=text, start=start, end=end))
+
+    normalized.sort(key=lambda item: (item.start, item.end))
+    sanitized: list[CaptionPatch] = []
+
+    for caption in normalized:
+        while sanitized and sanitized[-1].end > caption.start + CAPCUT_TIMESTAMP_EPSILON:
+            previous = sanitized.pop()
+            trimmed_overlaps += 1
+            trimmed_previous = CaptionPatch(
+                text=previous.text,
+                start=previous.start,
+                end=_round_seconds(caption.start),
+            )
+            if trimmed_previous.end - trimmed_previous.start >= min_duration:
+                sanitized.append(trimmed_previous)
+                break
+            dropped_after_overlap_trim += 1
+
+        sanitized.append(caption)
+
+    stats = CaptionSanitizerStats(
+        input_segments=len(captions),
+        output_segments=len(sanitized),
+        dropped_short_segments=dropped_short_segments,
+        trimmed_overlaps=trimmed_overlaps,
+        dropped_after_overlap_trim=dropped_after_overlap_trim,
+    )
+    return sanitized, stats
 
 
 def _map_source_time_to_cut_time(seconds: float, kept_ranges: list[TimeRange]) -> float:
@@ -385,15 +498,18 @@ def _replace_text_captions(draft: dict[str, Any], captions: list[CaptionPatch]) 
     materials.setdefault("texts", [])
     materials.setdefault("material_animations", [])
 
-    existing_text_track = next((track for track in draft["tracks"] if track.get("type") == "text"), None)
+    existing_text_tracks = [track for track in draft["tracks"] if track.get("type") == "text"]
+    existing_text_track = existing_text_tracks[0] if existing_text_tracks else None
     segment_template, text_template, animation_template = _get_text_templates(draft, existing_text_track)
     old_text_material_ids = {
         segment.get("material_id")
-        for segment in ((existing_text_track or {}).get("segments") or [])
+        for track in existing_text_tracks
+        for segment in (track.get("segments") or [])
     }
     old_animation_ids = {
         ref
-        for segment in ((existing_text_track or {}).get("segments") or [])
+        for track in existing_text_tracks
+        for segment in (track.get("segments") or [])
         for ref in (segment.get("extra_material_refs") or [])
     }
 
@@ -558,6 +674,7 @@ def _backup_files(write_targets: list[tuple[Path, dict[str, Any]]]) -> list[str]
 def _patch_summary(files: DraftFiles, patch: dict[str, Any], *, write: bool, backups: list[str]) -> dict[str, Any]:
     kept_ranges = patch["keptRanges"]
     captions = patch["captions"]
+    caption_sanitizer = patch["captionSanitizer"]
     input_duration = patch["inputDuration"]
     output_duration = _us_to_seconds(patch["outputDurationUs"])
     return {
@@ -568,8 +685,11 @@ def _patch_summary(files: DraftFiles, patch: dict[str, Any], *, write: bool, bac
         "outputDuration": output_duration,
         "removedDuration": max(0.0, input_duration - output_duration),
         "keptRanges": [_range_payload(item) for item in kept_ranges],
-        "videoSegments": len(kept_ranges),
+        "mediaSegments": _count_media_segments(patch["draft"]),
+        "videoSegments": _count_video_segments(patch["draft"]),
+        "audioSegments": _count_audio_segments(patch["draft"]),
         "captionSegments": len(captions),
+        "captionSanitizer": _caption_sanitizer_payload(caption_sanitizer),
         "backups": backups,
         "filesWritten": [str(path) for path, _ in _write_targets(files, patch["draft"], patch["meta"])] if write else [],
         "filesWouldWrite": [str(path) for path, _ in _write_targets(files, patch["draft"], patch["meta"])],
@@ -582,6 +702,28 @@ def _range_payload(item: TimeRange) -> dict[str, float]:
         "end": round(item.end, 6),
         "duration": round(item.duration, 6),
     }
+
+
+def _caption_sanitizer_payload(stats: CaptionSanitizerStats) -> dict[str, int]:
+    return {
+        "inputSegments": stats.input_segments,
+        "outputSegments": stats.output_segments,
+        "droppedShortSegments": stats.dropped_short_segments,
+        "trimmedOverlaps": stats.trimmed_overlaps,
+        "droppedAfterOverlapTrim": stats.dropped_after_overlap_trim,
+    }
+
+
+def _count_video_segments(draft: dict[str, Any]) -> int:
+    return sum(len(track.get("segments") or []) for track in _get_video_tracks(draft))
+
+
+def _count_audio_segments(draft: dict[str, Any]) -> int:
+    return sum(len(track.get("segments") or []) for track in _get_audio_tracks(draft))
+
+
+def _count_media_segments(draft: dict[str, Any]) -> int:
+    return sum(len(track.get("segments") or []) for track in _get_media_tracks(draft))
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -597,6 +739,10 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _seconds_to_us(seconds: float) -> int:
     return max(0, round(seconds * MICROSECONDS))
+
+
+def _round_seconds(seconds: float) -> float:
+    return round(seconds, 6)
 
 
 def _us_to_seconds(value: Any) -> float:

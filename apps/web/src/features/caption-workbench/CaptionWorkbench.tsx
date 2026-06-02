@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { alignFileSegment, isAlignmentServiceError } from '../../services/alignment/alignmentClient'
+import { isVideoSourceFile, prepareSourceMediaFile } from '../../services/media/mediaConversionClient'
 import { transcribeFile, transcribeFileSegment } from '../../services/transcription/transcriptionClient'
 import {
   applyAlignedWordsToGroup,
@@ -8,8 +9,9 @@ import {
   defaultGroupingSettings,
   exportSrt,
   groupWords,
-  getCaptionGaps,
   ingestTranscription,
+  applyCaptionGroupDraftToWords,
+  normalizeGroupingSettings,
   normalizeGroupTimings,
   nudgeGroupEndBoundary,
   nudgeGroupStartBoundary,
@@ -144,6 +146,9 @@ const alignmentPaddingSeconds = 0.35
 const mfaAlignmentConcurrency = 4
 const maxMfaServiceFailuresBeforeAbort = mfaAlignmentConcurrency
 
+const shouldPrintStateTable = (source: string) =>
+  source.includes('transcribe') || source.includes('cache') || source.includes('regroup')
+
 const cloneWords = (sourceWords: CaptionWord[]) => sourceWords.map((word) => ({ ...word }))
 
 const cloneGroups = (sourceGroups: CaptionGroup[]) =>
@@ -151,6 +156,18 @@ const cloneGroups = (sourceGroups: CaptionGroup[]) =>
     ...group,
     wordIds: [...group.wordIds],
   }))
+
+const getGroupDraftSignature = (sourceGroups: CaptionGroup[]) =>
+  sourceGroups
+    .map((group) => [
+      group.id,
+      group.start,
+      group.end,
+      group.text,
+      group.textOverride ?? '',
+      group.wordIds.join(','),
+    ].join(':'))
+    .join('|')
 
 const cloneSettings = (sourceSettings: GroupingSettings) => ({ ...sourceSettings })
 
@@ -288,6 +305,25 @@ const doesTimedItemOverlapRange = (item: Pick<CaptionWord, 'start' | 'end'>, ran
 const getVisibleCaptionGroups = (groups: CaptionGroup[], keptRanges: TimelineRange[]) =>
   groups.filter((group) => keptRanges.some((range) => doesTimedItemOverlapRange(group, range)))
 
+const getBreakRangesFromKeptRanges = (keptRanges: TimelineRange[]) =>
+  keptRanges
+    .slice()
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .flatMap((range, index, ranges) => {
+      const next = ranges[index + 1]
+      if (!next || next.start <= range.end) return []
+
+      return [{ start: range.end, end: next.start }]
+    })
+
+const getGroupsOverlappingRange = (groups: CaptionGroup[], range: TimelineRange) =>
+  groups.filter((group) => doesTimedItemOverlapRange(group, range))
+
+const getSelectedGroupAfterRangeEdit = (groups: CaptionGroup[], range: TimelineRange) =>
+  getGroupsOverlappingRange(groups, range)[0]?.id ??
+  groups.find((group) => group.start >= range.start)?.id ??
+  groups.at(-1)?.id
+
 const mergeTranscribedWordsIntoRanges = (
   currentWords: CaptionWord[],
   transcribedWords: CaptionWord[],
@@ -335,6 +371,7 @@ export function CaptionWorkbench() {
   const initialGroups: CaptionGroup[] = []
   const [words, setWords] = useState<CaptionWord[]>(initialWords)
   const [groups, setGroups] = useState<CaptionGroup[]>(initialGroups)
+  const [captionDraftGroups, setCaptionDraftGroups] = useState<CaptionGroup[] | undefined>()
   const [settings, setSettings] = useState<GroupingSettings>(savedProject?.settings ?? defaultGroupingSettings)
   const [skipState, setSkipState] = useState(createTimelineSkipState)
   const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(initialGroups[0]?.id)
@@ -364,7 +401,6 @@ export function CaptionWorkbench() {
   const [capCutProjectImport, setCapCutProjectImport] = useState<CapCutProjectImport | undefined>()
   const capCutStemFileRef = useRef<{ file: File; stemUrl: string } | undefined>(undefined)
   const [selectedCapCutSourceCutBoundaryId, setSelectedCapCutSourceCutBoundaryId] = useState<string | undefined>()
-  const [selectedCaptionGapId, setSelectedCaptionGapId] = useState<string | undefined>()
   const [capCutSourcePreview, setCapCutSourcePreview] = useState<
     { boundaryId: string; preview: CapCutSourcePreview } | undefined
   >()
@@ -375,6 +411,7 @@ export function CaptionWorkbench() {
   const historySignatureRef = useRef<string | undefined>(undefined)
   const wordMutationSourceRef = useRef('boot')
   const groupMutationSourceRef = useRef('boot')
+  const sourceMediaSelectionRef = useRef(0)
   const wordSnapshotRef = useRef<string | undefined>(undefined)
   const groupSnapshotRef = useRef<string | undefined>(undefined)
   const settingsSnapshotRef = useRef<string | undefined>(undefined)
@@ -391,6 +428,8 @@ export function CaptionWorkbench() {
       : null,
     language,
   })
+  const activeGroups = captionDraftGroups ?? groups
+  const hasCaptionDraft = Boolean(captionDraftGroups)
 
   const ensureAudioFingerprint = useCallback(async (nextFile: File) => {
     if (audioFingerprint && file === nextFile) return audioFingerprint
@@ -400,7 +439,7 @@ export function CaptionWorkbench() {
     return fingerprint
   }, [audioFingerprint, file])
 
-  const totalDuration = useMemo(() => Math.max(...groups.map((group) => group.end), 0), [groups])
+  const totalDuration = useMemo(() => Math.max(...activeGroups.map((group) => group.end), 0), [activeGroups])
   const [history, setHistory] = useState<EditorHistoryState>({ past: [], future: [] })
   const getEditorSnapshot = useCallback((): EditorHistorySnapshot => ({
     groups: cloneGroups(groups),
@@ -425,12 +464,32 @@ export function CaptionWorkbench() {
       future: [],
     }))
   }, [getEditorSnapshot])
+  const writeCaptionDraftGroups = useCallback((
+    updater: (currentGroups: CaptionGroup[]) => CaptionGroup[],
+    source: string,
+  ) => {
+    setCaptionDraftGroups((currentDraftGroups) => {
+      const baseGroups = cloneGroups(currentDraftGroups ?? groups)
+      const nextGroups = normalizeGroupTimings(updater(baseGroups), { linkAdjacent: false })
+      const hasChanges = getGroupDraftSignature(nextGroups) !== getGroupDraftSignature(groups)
+
+      flowLog('caption draft: write', {
+        source,
+        baseGroups: baseGroups.length,
+        nextGroups: nextGroups.length,
+        hasChanges,
+      })
+
+      return hasChanges ? nextGroups : undefined
+    })
+  }, [groups])
   const applyHistorySnapshot = useCallback((snapshot: EditorHistorySnapshot, source: string) => {
     const nextSnapshot = cloneHistorySnapshot(snapshot)
     historySignatureRef.current = getHistorySignature(nextSnapshot)
     wordMutationSourceRef.current = source
     groupMutationSourceRef.current = source
     settingsSnapshotRef.current = JSON.stringify(nextSnapshot.settings)
+    setCaptionDraftGroups(undefined)
     setWords(nextSnapshot.words)
     setGroups(nextSnapshot.groups)
     setSettings(nextSnapshot.settings)
@@ -461,6 +520,7 @@ export function CaptionWorkbench() {
     groupMutationSourceRef.current = mutationSource
     settingsSnapshotRef.current = JSON.stringify(nextSettings)
     setHistory({ past: [], future: [] })
+    setCaptionDraftGroups(undefined)
     setWords(nextWords)
     setGroups(nextGroups)
     setSettings(nextSettings)
@@ -471,6 +531,12 @@ export function CaptionWorkbench() {
     setAlignmentDirtyGroupIds(new Set())
   }, [])
   const undo = useCallback(() => {
+    if (captionDraftGroups) {
+      setCaptionDraftGroups(undefined)
+      setStatus('Caption text draft reverted.')
+      return
+    }
+
     const previous = history.past.at(-1)
     if (!previous) return
 
@@ -481,7 +547,7 @@ export function CaptionWorkbench() {
       future: [present, ...history.future].slice(0, historyLimit),
     })
     setStatus('Undid last editor action.')
-  }, [applyHistorySnapshot, getEditorSnapshot, history])
+  }, [applyHistorySnapshot, captionDraftGroups, getEditorSnapshot, history])
   const redo = useCallback(() => {
     const next = history.future[0]
     if (!next) return
@@ -547,11 +613,12 @@ export function CaptionWorkbench() {
 
       const nextWords = mergeTranscribedSegmentWords(words, segmentWords, start, end)
       const transcriptionSettings = getTranscriptionWriteSettings(settings)
-      const nextGroups = normalizeGroupTimings(groupWords(nextWords, transcriptionSettings))
+      const nextGroups = groupWords(nextWords, transcriptionSettings)
       commitHistory('segment transcribe')
       if (transcriptionSettings !== settings) setSettings(transcriptionSettings)
       wordMutationSourceRef.current = 'segment transcribe'
       groupMutationSourceRef.current = 'segment transcribe'
+      setCaptionDraftGroups(undefined)
       setWords(nextWords)
       setGroups(nextGroups)
       setAlignmentDirtyGroupIds(new Set())
@@ -587,22 +654,25 @@ export function CaptionWorkbench() {
     }
   }, [commitHistory, getActiveTranscriptionMediaSource, language, settings, words])
   const updateGroupTiming = useCallback((groupId: string, start: number, end: number, mode: GroupBoundaryEditMode = 'linked') => {
+    if (captionDraftGroups) {
+      writeCaptionDraftGroups(
+        (current) => setGroupBoundary(current, groupId, start, end, { mode }),
+        mode === 'independent' ? 'caption draft timing independent edit' : 'caption draft timing edit',
+      )
+      setSelectedGroupId(groupId)
+      setStatus('Timing draft updated. Apply text changes to rebuild committed groups.')
+      return
+    }
+
     commitHistory(mode === 'independent' ? 'group timing independent edit' : 'group timing edit')
     groupMutationSourceRef.current = 'group timing edit'
     setGroups((current) => setGroupBoundary(current, groupId, start, end, { mode }))
-  }, [commitHistory])
-  const captionGaps = useMemo(() => getCaptionGaps(groups), [groups])
+  }, [captionDraftGroups, commitHistory, writeCaptionDraftGroups])
   const handleCapCutSourceCutSelect = useCallback((boundaryId?: string) => {
     setSelectedCapCutSourceCutBoundaryId(boundaryId)
-    setSelectedCaptionGapId(undefined)
     setCapCutSourcePreviewError(undefined)
   }, [])
-  const handleCaptionGapSelect = useCallback((gapId?: string) => {
-    setSelectedCaptionGapId(gapId)
-    if (gapId) setSelectedCapCutSourceCutBoundaryId(undefined)
-  }, [])
   const handleEditorSelect = useCallback((groupId: string) => {
-    setSelectedCaptionGapId(undefined)
     setSelectedCapCutSourceCutBoundaryId(undefined)
     setSelectedGroupId(groupId)
   }, [])
@@ -618,7 +688,10 @@ export function CaptionWorkbench() {
     isReady: isTimelineReady,
     keptTimelineRanges,
     loopedGroupId,
-    playGroup,
+    minimapControlRef,
+    minimapContainerRef,
+    minimapSelectionRef,
+    minimapViewportRef,
     playbackRate,
     resetPlaybackPosition,
     selectedSkipRegionId,
@@ -632,16 +705,17 @@ export function CaptionWorkbench() {
     startLoopGroup,
     stopPlayback,
     timelineContainerRef,
+    timelineHoverGuideRef,
+    timelineHoverLabelRef,
+    timelineSurfaceRef,
     togglePlayback,
     waveformContainerRef,
     zoomLevel,
   } = useWaveSurferTimeline({
     audioUrl,
-    captionGaps,
     capCutTimelineMap: capCutProjectImport?.timelineMap,
     contentDuration: totalDuration,
-    groups,
-    selectedCaptionGapId,
+    groups: activeGroups,
     selectedGroupId,
     selectedCapCutSourceCutBoundaryId,
     skipState,
@@ -650,7 +724,6 @@ export function CaptionWorkbench() {
     setStatus,
     settings,
     words,
-    onCaptionGapSelect: handleCaptionGapSelect,
     onCapCutSourceCutSelect: handleCapCutSourceCutSelect,
     onHistoryCommit: commitHistory,
     onGroupTimingChange: updateGroupTiming,
@@ -663,33 +736,11 @@ export function CaptionWorkbench() {
       ),
     [capCutProjectImport, selectedCapCutSourceCutBoundaryId],
   )
-  const selectedCaptionGap = useMemo(
-    () => captionGaps.find((gap) => gap.id === selectedCaptionGapId),
-    [captionGaps, selectedCaptionGapId],
-  )
   const selectedCapCutSourcePreview =
     capCutSourcePreview && selectedCapCutSourceCutBoundary &&
     capCutSourcePreview.boundaryId === selectedCapCutSourceCutBoundary.id
       ? capCutSourcePreview.preview
       : undefined
-  const closeCaptionGapPanel = useCallback(() => {
-    setSelectedCaptionGapId(undefined)
-  }, [])
-  const linkSelectedCaptionGap = useCallback(() => {
-    const gap = selectedCaptionGap
-    if (!gap) return
-
-    const previous = groups.find((group) => group.id === gap.previousGroupId)
-    const next = groups.find((group) => group.id === gap.nextGroupId)
-    if (!previous || !next) return
-
-    commitHistory('link caption gap')
-    groupMutationSourceRef.current = 'link caption gap'
-    setGroups((current) => setGroupBoundary(current, previous.id, previous.start, next.start))
-    setSelectedCaptionGapId(undefined)
-    setSelectedGroupId(previous.id)
-    setStatus('Caption gap linked back to the next group.')
-  }, [commitHistory, groups, selectedCaptionGap])
   const closeCapCutSourceCutPanel = useCallback(() => {
     setSelectedCapCutSourceCutBoundaryId(undefined)
     setCapCutSourcePreviewError(undefined)
@@ -721,10 +772,18 @@ export function CaptionWorkbench() {
     () => keptTimelineRanges.filter((range) => range.end - range.start >= minChunkTranscriptionDuration),
     [keptTimelineRanges],
   )
+  const captionGroupingBreakRanges = useMemo(
+    () => getBreakRangesFromKeptRanges(keptTimelineRanges),
+    [keptTimelineRanges],
+  )
+  const groupWordsForCurrentTimeline = useCallback((
+    sourceWords: CaptionWord[],
+    nextSettings: GroupingSettings,
+  ) => groupWords(sourceWords, nextSettings, { breakRanges: captionGroupingBreakRanges }), [captionGroupingBreakRanges])
   const hasChunkTranscriptionSource = Boolean(file || capCutProjectImport?.stems[0])
   const visibleCaptionGroups = useMemo(
-    () => getVisibleCaptionGroups(groups, keptTimelineRanges),
-    [groups, keptTimelineRanges],
+    () => getVisibleCaptionGroups(activeGroups, keptTimelineRanges),
+    [activeGroups, keptTimelineRanges],
   )
   const visibleSelectedGroupId = visibleCaptionGroups.some((group) => group.id === selectedGroupId)
     ? selectedGroupId
@@ -766,9 +825,14 @@ export function CaptionWorkbench() {
     setAlignmentDirtyGroupIds((current) => new Set(Array.from(current).filter((groupId) => !cleanIds.has(groupId))))
   }, [])
   const alignCaptionGroups = useCallback(async (requestedGroupIds: string[], source: string) => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before MFA alignment.')
+      return
+    }
+
     const uniqueGroupIds = Array.from(new Set(requestedGroupIds))
     const requestedGroups = uniqueGroupIds
-      .map((groupId) => groups.find((group) => group.id === groupId))
+      .map((groupId) => activeGroups.find((group) => group.id === groupId))
       .filter((group): group is CaptionGroup => Boolean(group))
       .filter((group) => group.wordIds.length > 0 && getGroupDisplayText(group).trim())
 
@@ -787,7 +851,7 @@ export function CaptionWorkbench() {
     setStatus(`Running MFA alignment for ${requestedGroups.length} group(s), ${mfaAlignmentConcurrency} at a time...`)
 
     let nextWords = words
-    let nextGroups = groups
+    let nextGroups = activeGroups
     let nextApplyIndex = 0
     const completedOutcomes = new Map<number, AlignmentTaskOutcome>()
     const alignedGroupIds: string[] = []
@@ -826,6 +890,7 @@ export function CaptionWorkbench() {
 
                 wordMutationSourceRef.current = source
                 groupMutationSourceRef.current = source
+                setCaptionDraftGroups(undefined)
                 setWords(nextWords)
                 setGroups(nextGroups)
                 clearAlignmentDirty([currentGroup.id])
@@ -939,7 +1004,8 @@ export function CaptionWorkbench() {
     clearAlignmentDirty,
     commitHistory,
     getActiveTranscriptionMediaSource,
-    groups,
+    activeGroups,
+    captionDraftGroups,
     hasChunkTranscriptionSource,
     language,
     setAlignmentBusy,
@@ -960,6 +1026,11 @@ export function CaptionWorkbench() {
     void alignCaptionGroups(visibleCaptionGroups.map((group) => group.id), 'mfa alignment: visible groups')
   }, [alignCaptionGroups, visibleCaptionGroups])
   const handleTranscribeKeptChunks = useCallback(async () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before transcribing chunks.')
+      return
+    }
+
     if (!hasChunkTranscriptionSource) {
       flowWarn('chunk transcribe: blocked, no media source')
       setStatus('Upload audio/video or import a CapCut project before transcribing kept chunks.')
@@ -987,11 +1058,12 @@ export function CaptionWorkbench() {
       const applyChunkProgress = (source: string) => {
         const pendingRanges = ranges.filter((_, index) => !completedRangeIndexes.has(index))
         const pendingGroups = createPendingChunkGroups(pendingRanges)
-        const nextRealGroups = normalizeGroupTimings(groupWords(nextWords, transcriptionSettings))
+        const nextRealGroups = groupWordsForCurrentTimeline(nextWords, transcriptionSettings)
         const nextGroups = mergeGroupsWithPendingChunks(nextRealGroups, pendingGroups)
 
         wordMutationSourceRef.current = source
         groupMutationSourceRef.current = source
+        setCaptionDraftGroups(undefined)
         setWords(nextWords)
         setGroups(nextGroups)
         setSelectedGroupId((current) =>
@@ -1038,9 +1110,10 @@ export function CaptionWorkbench() {
         throw new Error('No words were detected in the kept chunks.')
       }
 
-      const nextGroups = normalizeGroupTimings(groupWords(nextWords, transcriptionSettings))
+      const nextGroups = groupWordsForCurrentTimeline(nextWords, transcriptionSettings)
       wordMutationSourceRef.current = 'transcribe kept chunks'
       groupMutationSourceRef.current = 'transcribe kept chunks'
+      setCaptionDraftGroups(undefined)
       setWords(nextWords)
       setGroups(nextGroups)
       setAlignmentDirtyGroupIds(new Set())
@@ -1075,6 +1148,7 @@ export function CaptionWorkbench() {
       wordMutationSourceRef.current = 'transcribe kept chunks: failed restore'
       groupMutationSourceRef.current = 'transcribe kept chunks: failed restore'
       setSettings(settings)
+      setCaptionDraftGroups(undefined)
       setWords(words)
       setGroups(groups)
       flowWarn('chunk transcribe: failed', {
@@ -1086,8 +1160,10 @@ export function CaptionWorkbench() {
       setIsTranscribing(false)
     }
   }, [
+    captionDraftGroups,
     commitHistory,
     getActiveTranscriptionMediaSource,
+    groupWordsForCurrentTimeline,
     groups,
     hasChunkTranscriptionSource,
     language,
@@ -1096,15 +1172,15 @@ export function CaptionWorkbench() {
     transcribableKeptRanges,
     words,
   ])
-  const averageWords = groups.length ? (words.length / groups.length).toFixed(1) : '0'
+  const averageWords = activeGroups.length ? (words.length / activeGroups.length).toFixed(1) : '0'
   const captionStats = useMemo(
     () => ({
       words: words.length,
-      groups: groups.length,
+      groups: activeGroups.length,
       averageWords,
       duration: `${totalDuration.toFixed(1)}s`,
     }),
-    [averageWords, groups.length, totalDuration, words.length],
+    [activeGroups.length, averageWords, totalDuration, words.length],
   )
   const savedSkipState = useMemo(() => serializeTimelineSkipState(skipState), [skipState])
   const currentProject = useMemo(
@@ -1182,7 +1258,6 @@ export function CaptionWorkbench() {
       setFile(undefined)
       setAudioFingerprint(capCutSource.audioFingerprint)
       setSelectedCapCutSourceCutBoundaryId(undefined)
-      setSelectedCaptionGapId(undefined)
       setCapCutSourcePreview(undefined)
       setCapCutSourcePreviewError(undefined)
       setIsCapCutImportOpen(false)
@@ -1208,6 +1283,7 @@ export function CaptionWorkbench() {
         wordMutationSourceRef.current = 'capcut import: empty project'
         groupMutationSourceRef.current = 'capcut import: empty project'
         setHistory({ past: [], future: [] })
+        setCaptionDraftGroups(undefined)
         setWords([])
         setGroups([])
         setAlignmentDirtyGroupIds(new Set())
@@ -1236,7 +1312,9 @@ export function CaptionWorkbench() {
     try {
       const summary = await dryRunCapCutPatch(projectPath, buildCurrentCapCutManifest())
       setCapCutPatchSummary(summary)
-      setStatus(`CapCut dry run: ${summary.videoSegments} video segments, ${summary.captionSegments} captions.`)
+      setStatus(
+        `CapCut dry run: ${summary.mediaSegments ?? summary.videoSegments} media segments, ${summary.captionSegments} captions.`,
+      )
     } catch (error) {
       setCapCutPatchError(error instanceof Error ? error.message : 'CapCut dry run failed.')
     } finally {
@@ -1267,9 +1345,6 @@ export function CaptionWorkbench() {
   useEffect(() => {
     flowLog('boot', bootFlowLogRef.current)
   }, [])
-
-  const shouldPrintStateTable = (source: string) =>
-    source.includes('transcribe') || source.includes('cache') || source.includes('regroup')
 
   const getTimedSignature = (
     items: Array<Pick<CaptionWord, 'id' | 'start' | 'end' | 'text'> & { textOverride?: string }>,
@@ -1320,9 +1395,11 @@ export function CaptionWorkbench() {
       settings,
       words: words.length,
       groups: groups.length,
-      note: 'Groups are recalculated when Regroup runs.',
+      note: captionDraftGroups
+        ? 'Pending caption text draft will be rebuilt after Update groups.'
+        : 'Groups are recalculated from the editor word layer when rules are applied.',
     })
-  }, [groups.length, settings, words.length])
+  }, [captionDraftGroups, groups.length, settings, words.length])
 
   useEffect(() => {
     return () => {
@@ -1361,7 +1438,7 @@ export function CaptionWorkbench() {
     }
   }, [canAutosaveProject, currentProject, savedProject])
 
-  const setActiveGroups = (
+  const setActiveGroups = useCallback((
     nextGroups: CaptionGroup[],
     source = 'groups write',
     details?: Record<string, unknown>,
@@ -1383,9 +1460,10 @@ export function CaptionWorkbench() {
     if (shouldPrintStateTable(source)) {
       flowTimedTable('groups write table', normalizedGroups, { source })
     }
+    setCaptionDraftGroups(undefined)
     setGroups(normalizedGroups)
     setSelectedGroupId((current) => current && normalizedGroups.some((group) => group.id === current) ? current : normalizedGroups[0]?.id)
-  }
+  }, [commitHistory])
 
   const getTranscriptionSummary = (wordCount: number, groupCount: number) =>
     `${wordCount} words, ${groupCount} groups`
@@ -1506,6 +1584,11 @@ export function CaptionWorkbench() {
   }
 
   const handleLoadCachedTranscript = () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before loading cache.')
+      return
+    }
+
     if (!audioFingerprint) {
       flowWarn('cache load: blocked, no audio fingerprint')
       return
@@ -1520,10 +1603,15 @@ export function CaptionWorkbench() {
   }
 
   const handleFileChange = async (nextFile: File) => {
+    const selectionId = sourceMediaSelectionRef.current + 1
+    sourceMediaSelectionRef.current = selectionId
+    const isVideoSource = isVideoSourceFile(nextFile)
+
     stopPlayback()
     flowLog('upload: selected', {
       file: summarizeFile(nextFile),
       language,
+      sourceKind: isVideoSource ? 'video' : 'audio',
     })
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setCapCutProjectImport(undefined)
@@ -1531,14 +1619,54 @@ export function CaptionWorkbench() {
     setSelectedCapCutSourceCutBoundaryId(undefined)
     setCapCutSourcePreview(undefined)
     setCapCutSourcePreviewError(undefined)
-    setFile(nextFile)
+    setFile(undefined)
     setAudioFingerprint(undefined)
-    setAudioUrl(URL.createObjectURL(nextFile))
+    setAudioUrl(undefined)
     resetPlaybackPosition()
-    setStatus('Checking local transcription cache...')
+
+    let preparedFile = nextFile
+    if (isVideoSource) {
+      setStatus('Extracting an editor audio track from the selected video...')
+      try {
+        const preparedSource = await prepareSourceMediaFile(nextFile)
+        if (sourceMediaSelectionRef.current !== selectionId) {
+          flowLog('upload: ignored stale video extraction result', {
+            file: summarizeFile(nextFile),
+          })
+          return
+        }
+        preparedFile = preparedSource.file
+        flowLog('upload: video converted to editor audio', {
+          input: summarizeFile(nextFile),
+          output: summarizeFile(preparedFile),
+        })
+      } catch (error) {
+        if (sourceMediaSelectionRef.current !== selectionId) return
+        flowWarn('upload: video audio extraction failed', {
+          file: summarizeFile(nextFile),
+          message: error instanceof Error ? error.message : String(error),
+        })
+        setStatus(error instanceof Error ? error.message : 'Could not extract audio from the selected video.')
+        return
+      }
+    }
+
+    setFile(preparedFile)
+    setAudioUrl(URL.createObjectURL(preparedFile))
+    setStatus(
+      isVideoSource
+        ? 'Video audio extracted. Checking local transcription cache...'
+        : 'Checking local transcription cache...',
+    )
 
     try {
-      const fingerprint = await createAudioFingerprint(nextFile)
+      const fingerprint = await createAudioFingerprint(preparedFile)
+      if (sourceMediaSelectionRef.current !== selectionId) {
+        flowLog('upload: ignored stale fingerprint result', {
+          fingerprint: shortFingerprint(fingerprint),
+        })
+        return
+      }
       setAudioFingerprint(fingerprint)
       const cacheMeta = getTranscriptionCacheMeta(fingerprint, language)
       const savedProjectFallback = savedProject?.audioFingerprint === fingerprint && savedProject.language === language
@@ -1550,6 +1678,8 @@ export function CaptionWorkbench() {
         cacheHit: hasCache,
         cacheWords: cacheMeta.words,
         cacheGroups: cacheMeta.groups,
+        file: summarizeFile(preparedFile),
+        originalFile: isVideoSource ? summarizeFile(nextFile) : undefined,
         savedProjectFallback,
         sameTranscript: isSameTranscript,
       })
@@ -1558,6 +1688,7 @@ export function CaptionWorkbench() {
         commitHistory('upload: clear stale transcript')
         wordMutationSourceRef.current = 'upload: clear stale transcript'
         groupMutationSourceRef.current = 'upload: clear stale transcript'
+        setCaptionDraftGroups(undefined)
         setWords([])
         setGroups([])
         setAlignmentDirtyGroupIds(new Set())
@@ -1579,19 +1710,30 @@ export function CaptionWorkbench() {
       setStatus(
         hasCache
           ? 'File staged. Cached transcription is available; use Load Cache or Transcribe fresh.'
-          : 'File staged. No cached transcription found yet.',
+          : isVideoSource
+            ? 'Video audio staged. No cached transcription found yet.'
+            : 'File staged. No cached transcription found yet.',
       )
     } catch {
       flowWarn('upload: fingerprint failed', {
-        file: summarizeFile(nextFile),
+        file: summarizeFile(preparedFile),
       })
-      setStatus('File staged. Could not create a local cache fingerprint.')
+      setStatus(
+        isVideoSource
+          ? 'Video audio staged. Could not create a local cache fingerprint.'
+          : 'File staged. Could not create a local cache fingerprint.',
+      )
     }
   }
 
   const handleRegroup = () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before regrouping.')
+      return
+    }
+
     stopPlayback()
-    const nextGroups = groupWords(words, settings)
+    const nextGroups = groupWordsForCurrentTimeline(words, settings)
     flowLog('regroup: local rebuild', {
       words: words.length,
       previousGroups: groups.length,
@@ -1605,10 +1747,15 @@ export function CaptionWorkbench() {
       previousGroups: groups.length,
       settings,
     })
-    setStatus('Groups rebuilt from original word timestamps. Manual text and timing edits in groups were reset.')
+    setStatus('Groups rebuilt from current editor words and caption rules.')
   }
 
   const handleTranscribe = async () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before transcribing fresh audio.')
+      return
+    }
+
     if (!file) {
       flowWarn('transcribe: blocked, no file')
       return
@@ -1687,34 +1834,136 @@ export function CaptionWorkbench() {
     }
   }
 
-  const updateGroupText = (groupId: string, text: string) => {
-    commitHistory('group text edit')
-    groupMutationSourceRef.current = 'group text edit'
-    setGroups((current) =>
-      current.map((group) => (group.id === groupId ? { ...group, textOverride: text } : group)),
+  const revertCaptionDraft = useCallback(() => {
+    setCaptionDraftGroups(undefined)
+    setSelectedGroupId((current) => current && groups.some((group) => group.id === current) ? current : groups[0]?.id)
+    setStatus('Caption text draft reverted.')
+  }, [groups])
+
+  const applyCaptionDraft = useCallback(() => {
+    const draftGroups = captionDraftGroups
+    if (!draftGroups) return
+
+    stopPlayback()
+    commitHistory('caption draft apply')
+
+    const draftWordIdFactories = new Map<number, ReturnType<typeof createWordIdFactory>>()
+    const {
+      words: nextWords,
+      groups: nextGroups,
+      editedRanges,
+    } = applyCaptionGroupDraftToWords({
+      breakRanges: captionGroupingBreakRanges,
+      words,
+      draftGroups,
+      settings,
+      createWordId: (draftGroup, groupIndex, wordIndex) => {
+        const existingFactory = draftWordIdFactories.get(groupIndex)
+        if (existingFactory) return existingFactory(wordIndex)
+
+        const factory = createWordIdFactory(`draft_${draftGroup.id.replace(/[^a-z0-9]+/gi, '_')}_${groupIndex}`)
+        draftWordIdFactories.set(groupIndex, factory)
+        return factory(wordIndex)
+      },
+    })
+    const editedGroupIds = Array.from(new Set(
+      editedRanges.flatMap((range) => getGroupsOverlappingRange(nextGroups, range).map((group) => group.id)),
+    ))
+    const selectedDraftGroup = selectedGroupId
+      ? draftGroups.find((group) => group.id === selectedGroupId)
+      : undefined
+    const selectedRange = selectedDraftGroup
+      ? { start: selectedDraftGroup.start, end: selectedDraftGroup.end }
+      : editedRanges[0]
+
+    wordMutationSourceRef.current = 'caption draft apply'
+    setWords(nextWords)
+    setActiveGroups(nextGroups, 'caption draft apply', {
+      draftGroups: draftGroups.length,
+      editedRanges: editedRanges.length,
+      nextWords: nextWords.length,
+      nextGroups: nextGroups.length,
+      settings,
+    }, { recordHistory: false })
+    markAlignmentDirty(editedGroupIds)
+    setSelectedGroupId(
+      selectedRange
+        ? getSelectedGroupAfterRangeEdit(nextGroups, selectedRange)
+        : nextGroups[0]?.id,
     )
-    markAlignmentDirty([groupId])
+    setStatus(
+      editedRanges.length
+        ? `Applied text draft and rebuilt ${nextGroups.length} groups.`
+        : `Rebuilt ${nextGroups.length} groups from current caption rules.`,
+    )
+  }, [
+    captionDraftGroups,
+    captionGroupingBreakRanges,
+    commitHistory,
+    markAlignmentDirty,
+    selectedGroupId,
+    setActiveGroups,
+    settings,
+    stopPlayback,
+    words,
+  ])
+
+  const updateGroupText = (groupId: string, text: string) => {
+    writeCaptionDraftGroups(
+      (currentGroups) =>
+        currentGroups.map((group) =>
+          group.id === groupId
+            ? {
+                ...group,
+                textOverride: text === group.text ? undefined : text,
+              }
+            : group,
+        ),
+      'caption draft text edit',
+    )
+    setSelectedGroupId(groupId)
+    setStatus('Caption text draft updated. Use Update groups to rebuild timings and groups.')
   }
 
   const nudgeGroupStart = useCallback((groupId: string, offset: number) => {
+    if (captionDraftGroups) {
+      writeCaptionDraftGroups(
+        (current) => nudgeGroupStartBoundary(current, groupId, offset),
+        'caption draft start nudge',
+      )
+      setSelectedGroupId(groupId)
+      setStatus(`Draft group start nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
+      return
+    }
+
     commitHistory('group start nudge')
     groupMutationSourceRef.current = 'group start nudge'
     setGroups((current) => nudgeGroupStartBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group start nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
-  }, [commitHistory])
+  }, [captionDraftGroups, commitHistory, writeCaptionDraftGroups])
 
   const nudgeGroupEnd = useCallback((groupId: string, offset: number) => {
+    if (captionDraftGroups) {
+      writeCaptionDraftGroups(
+        (current) => nudgeGroupEndBoundary(current, groupId, offset),
+        'caption draft end nudge',
+      )
+      setSelectedGroupId(groupId)
+      setStatus(`Draft group end nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
+      return
+    }
+
     commitHistory('group end nudge')
     groupMutationSourceRef.current = 'group end nudge'
     setGroups((current) => nudgeGroupEndBoundary(current, groupId, offset))
     setSelectedGroupId(groupId)
     setStatus(`Group end nudged 1 frame ${offset < 0 ? 'earlier' : 'later'}.`)
-  }, [commitHistory])
+  }, [captionDraftGroups, commitHistory, writeCaptionDraftGroups])
 
   const splitGroup = (groupId: string) => {
-    const groupIndex = groups.findIndex((group) => group.id === groupId)
-    const group = groups[groupIndex]
+    const groupIndex = activeGroups.findIndex((group) => group.id === groupId)
+    const group = activeGroups[groupIndex]
     if (!group || group.wordIds.length < 2) {
       setStatus('Single-word groups cannot be split further.')
       return
@@ -1739,29 +1988,30 @@ export function CaptionWorkbench() {
       },
       words,
     )
-    setActiveGroups([...groups.slice(0, groupIndex), first, second, ...groups.slice(groupIndex + 1)], 'split group', {
-      groupId,
-    })
-    markAlignmentDirty([first.id, second.id])
+    writeCaptionDraftGroups(
+      (current) => [...current.slice(0, groupIndex), first, second, ...current.slice(groupIndex + 1)],
+      'caption draft split group',
+    )
     setSelectedGroupId(second.id)
-    setStatus('Group split while preserving word timestamps.')
+    setStatus('Group split in draft. Use Update groups to rebuild committed groups.')
   }
 
-  const splitGroupAtCursor = (groupId: string, cursorIndex: number) => {
-    const groupIndex = groups.findIndex((group) => group.id === groupId)
-    const group = groups[groupIndex]
+  const splitGroupAtCursor = (groupId: string, cursorIndex: number, text: string) => {
+    const groupIndex = activeGroups.findIndex((group) => group.id === groupId)
+    const group = activeGroups[groupIndex]
     if (!group || group.wordIds.length < 2) {
       setStatus('Single-word groups cannot be split further.')
       return false
     }
 
-    const displayText = getGroupDisplayText(group)
+    const displayText = text
     const splitAt = getTextWordCount(displayText.slice(0, cursorIndex))
     if (splitAt <= 0 || splitAt >= group.wordIds.length) {
       setStatus('Place the cursor between words to split this group.')
       return false
     }
 
+    const hasCustomDisplayText = getTextOverride(displayText) !== getTextOverride(group.text)
     const firstText = getTextOverride(displayText.slice(0, cursorIndex))
     const secondText = getTextOverride(displayText.slice(cursorIndex))
     const first = rebuildGroupTiming(
@@ -1769,7 +2019,7 @@ export function CaptionWorkbench() {
         ...group,
         id: `${group.id}_a`,
         wordIds: group.wordIds.slice(0, splitAt),
-        textOverride: group.textOverride === undefined ? undefined : firstText,
+        textOverride: hasCustomDisplayText ? firstText : undefined,
       },
       words,
     )
@@ -1778,25 +2028,24 @@ export function CaptionWorkbench() {
         ...group,
         id: `${group.id}_b`,
         wordIds: group.wordIds.slice(splitAt),
-        textOverride: group.textOverride === undefined ? undefined : secondText,
+        textOverride: hasCustomDisplayText ? secondText : undefined,
       },
       words,
     )
 
-    setActiveGroups([...groups.slice(0, groupIndex), first, second, ...groups.slice(groupIndex + 1)], 'split group at cursor', {
-      groupId,
-      splitAt,
-    })
-    markAlignmentDirty([first.id, second.id])
+    writeCaptionDraftGroups(
+      (current) => [...current.slice(0, groupIndex), first, second, ...current.slice(groupIndex + 1)],
+      'caption draft split group at cursor',
+    )
     setSelectedGroupId(second.id)
-    setStatus('Group split from the text cursor.')
+    setStatus('Group split from the text cursor in draft.')
     return true
   }
 
   const mergeGroupWithPrevious = (groupId: string) => {
-    const groupIndex = groups.findIndex((group) => group.id === groupId)
-    const previous = groups[groupIndex - 1]
-    const group = groups[groupIndex]
+    const groupIndex = activeGroups.findIndex((group) => group.id === groupId)
+    const previous = activeGroups[groupIndex - 1]
+    const group = activeGroups[groupIndex]
     if (!previous || !group) {
       setStatus('There is no previous group to merge.')
       return false
@@ -1811,47 +2060,42 @@ export function CaptionWorkbench() {
       },
       words,
     )
-    setActiveGroups([...groups.slice(0, groupIndex - 1), merged, ...groups.slice(groupIndex + 1)], 'merge group with previous', {
-      groupId,
-    })
-    markAlignmentDirty([merged.id])
+    writeCaptionDraftGroups(
+      (current) => [...current.slice(0, groupIndex - 1), merged, ...current.slice(groupIndex + 1)],
+      'caption draft merge group with previous',
+    )
     setSelectedGroupId(merged.id)
-    setStatus('Groups merged like a document line backspace.')
+    setStatus('Groups merged in draft like a document line backspace.')
     return true
   }
 
-  const mergeGroupWithNext = (groupId: string) => {
-    const groupIndex = groups.findIndex((group) => group.id === groupId)
-    const group = groups[groupIndex]
-    const next = groups[groupIndex + 1]
-    if (!group || !next) {
-      setStatus('There is no next group to merge.')
+  const handleSettingsChange = (nextSettings: GroupingSettings) => {
+    const normalizedSettings = normalizeGroupingSettings(nextSettings)
+    if (captionDraftGroups) {
+      setSettings(normalizedSettings)
+      setStatus('Caption rules updated. Apply the text draft to rebuild groups with the new limits.')
       return
     }
 
-    const merged = rebuildGroupTiming(
-      {
-        ...group,
-        id: `${group.id}_m`,
-        wordIds: [...group.wordIds, ...next.wordIds],
-        textOverride: getCombinedTextOverride(group, next),
-      },
-      words,
-    )
-    setActiveGroups([...groups.slice(0, groupIndex), merged, ...groups.slice(groupIndex + 2)], 'merge group', {
-      groupId,
-    })
-    markAlignmentDirty([merged.id])
-    setSelectedGroupId(merged.id)
-    setStatus('Groups merged from their existing word timestamps.')
-  }
+    const nextGroups = groupWordsForCurrentTimeline(words, normalizedSettings)
 
-  const handleSettingsChange = (nextSettings: GroupingSettings) => {
     commitHistory('settings change')
-    setSettings(nextSettings)
+    setSettings(normalizedSettings)
+    setActiveGroups(nextGroups, 'settings change: auto regroup', {
+      words: words.length,
+      previousGroups: groups.length,
+      nextGroups: nextGroups.length,
+      settings: normalizedSettings,
+    }, { recordHistory: false })
+    setStatus('Caption groups rebuilt from current words and updated rules.')
   }
 
   const handleExportSrt = () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before exporting SRT.')
+      return
+    }
+
     const didSave = saveProject(currentProject)
     flowLog('export: SRT', {
       projectSaved: didSave,
@@ -1863,6 +2107,11 @@ export function CaptionWorkbench() {
   }
 
   const handleExportCapCutManifest = () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before exporting CapCut JSON.')
+      return
+    }
+
     const manifest = buildCurrentCapCutManifest()
     const didSave = saveProject(currentProject)
     flowLog('export: CapCut patch manifest', {
@@ -1880,6 +2129,11 @@ export function CaptionWorkbench() {
   }
 
   const handleSaveProject = () => {
+    if (captionDraftGroups) {
+      setStatus('Apply or revert the caption text draft before saving.')
+      return
+    }
+
     if (!canAutosaveProject) {
       flowWarn('project save: blocked', {
         reason: 'no active source media',
@@ -2012,7 +2266,8 @@ export function CaptionWorkbench() {
   return (
     <CaptionWorkbenchScreen
       groups={visibleCaptionGroups}
-      totalGroups={groups.length}
+      hasCaptionDraft={hasCaptionDraft}
+      totalGroups={activeGroups.length}
       selectedGroupId={visibleSelectedGroupId}
       selectedSkipRegionId={selectedSkipRegionId}
       isPlaying={isPlaying}
@@ -2020,19 +2275,26 @@ export function CaptionWorkbench() {
       isAligningCaptions={isAligningCaptions}
       alignmentProgressLabel={alignmentProgressLabel}
       aligningGroupIds={Array.from(aligningGroupIds)}
-      canRedo={history.future.length > 0}
-      canExportCutManifest={groups.length > 0 && keptTimelineRanges.length > 0}
-      canSaveProject={canAutosaveProject}
-      canAlignCaptions={hasChunkTranscriptionSource && visibleCaptionGroups.length > 0}
-      canAlignSelectedCaption={hasChunkTranscriptionSource && Boolean(visibleSelectedGroupId)}
-      canTranscribeKeptChunks={hasChunkTranscriptionSource && transcribableKeptRanges.length > 0}
+      canRedo={!hasCaptionDraft && history.future.length > 0}
+      canExportCutManifest={!hasCaptionDraft && groups.length > 0 && keptTimelineRanges.length > 0}
+      canSaveProject={canAutosaveProject && !hasCaptionDraft}
+      canAlignCaptions={!hasCaptionDraft && hasChunkTranscriptionSource && visibleCaptionGroups.length > 0}
+      canAlignSelectedCaption={!hasCaptionDraft && hasChunkTranscriptionSource && Boolean(visibleSelectedGroupId)}
+      canTranscribeKeptChunks={!hasCaptionDraft && hasChunkTranscriptionSource && transcribableKeptRanges.length > 0}
       dirtyAlignmentCount={dirtyVisibleGroupIds.length}
-      canUndo={history.past.length > 0}
+      canUndo={hasCaptionDraft || history.past.length > 0}
       hasCachedTranscript={hasCachedTranscript}
       audioUrl={audioUrl}
       captionContainerRef={captionContainerRef}
       isTimelineReady={isTimelineReady}
+      minimapControlRef={minimapControlRef}
+      minimapContainerRef={minimapContainerRef}
+      minimapSelectionRef={minimapSelectionRef}
+      minimapViewportRef={minimapViewportRef}
+      timelineSurfaceRef={timelineSurfaceRef}
       timelineContainerRef={timelineContainerRef}
+      timelineHoverGuideRef={timelineHoverGuideRef}
+      timelineHoverLabelRef={timelineHoverLabelRef}
       timelineZoomConfig={timelineZoomConfig}
       playbackRate={playbackRate}
       playbackRateLabel={formatPlaybackRateLabel(playbackRate)}
@@ -2053,7 +2315,6 @@ export function CaptionWorkbench() {
       capCutSourceCutBoundary={selectedCapCutSourceCutBoundary}
       capCutSourcePreview={selectedCapCutSourcePreview}
       capCutSourcePreviewError={capCutSourcePreviewError}
-      captionGap={selectedCaptionGap}
       isCapCutImportBusy={isCapCutImportBusy}
       isCapCutImportOpen={isCapCutImportOpen}
       isCapCutPatchBusy={isCapCutPatchBusy}
@@ -2074,8 +2335,6 @@ export function CaptionWorkbench() {
       onCapCutImportRun={runCapCutImport}
       onCapCutSourceCutClose={closeCapCutSourceCutPanel}
       onCapCutSourcePreviewLoad={loadSelectedCapCutSourcePreview}
-      onCaptionGapClose={closeCaptionGapPanel}
-      onCaptionGapLink={linkSelectedCaptionGap}
       onCapCutPatchClose={() => setIsCapCutPatchOpen(false)}
       onCapCutPatchDryRun={runCapCutPatchDryRun}
       onCapCutPatchOpen={openCapCutPatchDialog}
@@ -2101,13 +2360,14 @@ export function CaptionWorkbench() {
       onAlignVisibleGroups={alignVisibleGroups}
       onTimelineZoomChange={setZoomLevel}
       onEditorSelect={handleEditorSelect}
+      onApplyCaptionDraft={applyCaptionDraft}
+      onRevertCaptionDraft={revertCaptionDraft}
       onGroupTextChange={updateGroupText}
       onGroupTimingChange={updateGroupTiming}
+      onMaxCharsChange={(maxChars) => handleSettingsChange({ ...settings, maxChars })}
       onSplitGroupAtCursor={splitGroupAtCursor}
       onMergeGroupWithPrevious={mergeGroupWithPrevious}
-      onPlayGroup={playGroup}
       onSplitGroup={splitGroup}
-      onMergeGroupWithNext={mergeGroupWithNext}
       onLanguageChange={setLanguage}
       onSettingsChange={handleSettingsChange}
     />

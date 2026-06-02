@@ -9,6 +9,10 @@ class AudioProcessingError(RuntimeError):
     pass
 
 
+EDITOR_AUDIO_BITRATE = "96k"
+EDITOR_AUDIO_SAMPLE_RATE = "44100"
+
+
 def has_ffmpeg() -> bool:
     return bool(shutil.which("ffmpeg"))
 
@@ -80,3 +84,42 @@ def create_mono_wav_segment(source_path: Path, output_path: Path, start: float, 
     except (OSError, subprocess.CalledProcessError) as error:
         details = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
         raise AudioProcessingError(f"Could not prepare selected audio segment: {details}") from error
+
+
+def extract_editor_audio(source_path: Path, output_path: Path) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise AudioProcessingError("ffmpeg is required to extract audio from the selected video.")
+
+    try:
+        subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source_path),
+                "-vn",
+                "-map",
+                "0:a:0",
+                "-map_metadata",
+                "-1",
+                "-ac",
+                "2",
+                "-ar",
+                EDITOR_AUDIO_SAMPLE_RATE,
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                EDITOR_AUDIO_BITRATE,
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        details = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) else str(error)
+        raise AudioProcessingError(f"Could not extract audio from selected media: {details}") from error

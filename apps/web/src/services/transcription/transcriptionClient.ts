@@ -1,6 +1,7 @@
 import type { TranscriptionResult } from '../../contracts/captions'
 import { flowLog, flowWarn, summarizeFile } from '../../shared/observability/flowLogger'
 import { apiBase } from '../api/apiConfig'
+import { readApiErrorMessage } from '../api/errors'
 
 export type TranscriptionSegmentRange = {
   end: number
@@ -24,12 +25,12 @@ export const transcribeFile = async (file: File, language: string) => {
   })
 
   if (!response.ok) {
-    const message = await response.text()
+    const message = await readApiErrorMessage(response, 'Transcription failed.')
     flowWarn('api: transcribe error', {
       status: response.status,
-      message: message || 'Transcription failed.',
+      message,
     })
-    throw new Error(message || 'Transcription failed.')
+    throw new Error(message)
   }
 
   const result = (await response.json()) as TranscriptionResult
@@ -67,12 +68,12 @@ export const transcribeFileSegment = async (
   })
 
   if (!response.ok) {
-    const message = await response.text()
+    const message = await readApiErrorMessage(response, 'Segment transcription failed.')
     flowWarn('api: segment transcribe error', {
       status: response.status,
-      message: message || 'Segment transcription failed.',
+      message,
     })
-    throw new Error(message || 'Segment transcription failed.')
+    throw new Error(message)
   }
 
   const result = (await response.json()) as TranscriptionResult
@@ -112,12 +113,12 @@ export const transcribeFileSegments = async (
   })
 
   if (!response.ok) {
-    const message = await response.text()
+    const message = await readApiErrorMessage(response, 'Segment batch transcription failed.')
     flowWarn('api: segments transcribe error', {
       status: response.status,
-      message: message || 'Segment batch transcription failed.',
+      message,
     })
-    throw new Error(message || 'Segment batch transcription failed.')
+    throw new Error(message)
   }
 
   const result = (await response.json()) as TranscriptionResult

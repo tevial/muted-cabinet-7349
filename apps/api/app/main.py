@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Annotated, Any
 
+from starlette.background import BackgroundTask
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -34,6 +38,7 @@ from .capcut_timeline import (
 )
 from .captioning import CaptionGroup, GroupingSettings, Word, export_srt, group_words
 from .alignment import AlignmentError, MfaAlignmentBackend, MfaOptions, align_audio_segment
+from .audio_processing import AudioProcessingError, EDITOR_AUDIO_BITRATE, extract_editor_audio
 from .transcription import (
     FallbackTranscriptionBackend,
     OpenAiTranscriptionBackend,
@@ -54,6 +59,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Editor-Audio-Bitrate"],
 )
 
 
@@ -293,6 +299,19 @@ def _capcut_error(error: CapCutDraftError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(error))
 
 
+def _safe_media_stem(filename: str) -> str:
+    stem = Path(filename).stem.strip()
+    safe_stem = "".join(char if char.isalnum() or char in "._-" else "-" for char in stem)
+    safe_stem = safe_stem.strip(".-_")
+    return safe_stem or "source-media"
+
+
+async def _save_upload_file(upload: UploadFile, destination: Path) -> None:
+    with destination.open("wb") as output:
+        while chunk := await upload.read(1024 * 1024):
+            output.write(chunk)
+
+
 def _stable_ts_options() -> StableTsOptions:
     return StableTsOptions(
         model=settings.stable_ts_model,
@@ -384,6 +403,36 @@ def export_srt_route(payload: SrtRequest) -> str:
         for item in payload.groups
     ]
     return export_srt(groups)
+
+
+@app.post("/api/media/extract-audio")
+async def extract_media_audio(file: Annotated[UploadFile, File()]) -> FileResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing upload filename.")
+
+    work_dir = Path(tempfile.mkdtemp(prefix="capcut-caption-media-"))
+    safe_stem = _safe_media_stem(file.filename)
+    source_path = work_dir / f"{safe_stem}{Path(file.filename).suffix}"
+    output_name = f"{safe_stem}-audio.mp3"
+    output_path = work_dir / output_name
+
+    try:
+        await _save_upload_file(file, source_path)
+        await asyncio.to_thread(extract_editor_audio, source_path, output_path)
+    except AudioProcessingError as error:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except OSError as error:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Could not stage selected media: {error}") from error
+
+    return FileResponse(
+        output_path,
+        media_type="audio/mpeg",
+        filename=output_name,
+        background=BackgroundTask(lambda: shutil.rmtree(work_dir, ignore_errors=True)),
+        headers={"X-Editor-Audio-Bitrate": EDITOR_AUDIO_BITRATE},
+    )
 
 
 @app.post("/api/capcut/inspect")

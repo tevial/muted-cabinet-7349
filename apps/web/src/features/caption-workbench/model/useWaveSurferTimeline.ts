@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
 import WaveSurfer from 'wavesurfer.js'
-import HoverPlugin from 'wavesurfer.js/plugins/hover'
 import MinimapPlugin from 'wavesurfer.js/plugins/minimap'
 import RegionsPlugin, { type Region } from 'wavesurfer.js/plugins/regions'
 import TimelinePlugin from 'wavesurfer.js/plugins/timeline'
@@ -8,7 +7,7 @@ import ZoomPlugin from 'wavesurfer.js/plugins/zoom'
 
 import type { CaptionGroup, CaptionWord, GroupingSettings } from '../../../contracts/captions'
 import type { CapCutTimelineMap } from '../../../contracts/capcut'
-import type { CaptionGap, EmptyZoneCut, GroupBoundaryEditMode } from '../../../domain/captions'
+import type { EmptyZoneCut, GroupBoundaryEditMode } from '../../../domain/captions'
 import { formatSeconds, getEmptyZoneCuts, roundCaptionTime, timingNudgeStep } from '../../../domain/captions'
 import {
   captionLaneOptions,
@@ -71,11 +70,9 @@ export type TimelineRange = PlaybackRange
 
 type UseWaveSurferTimelineOptions = {
   audioUrl?: string
-  captionGaps: CaptionGap[]
   capCutTimelineMap?: CapCutTimelineMap
   contentDuration: number
   groups: CaptionGroup[]
-  selectedCaptionGapId?: string
   selectedGroupId?: string
   skipState: TimelineSkipState
   setSkipState: Dispatch<SetStateAction<TimelineSkipState>>
@@ -84,7 +81,6 @@ type UseWaveSurferTimelineOptions = {
   settings: GroupingSettings
   selectedCapCutSourceCutBoundaryId?: string
   words: CaptionWord[]
-  onCaptionGapSelect?: (gapId?: string) => void
   onCapCutSourceCutSelect?: (boundaryId?: string) => void
   onHistoryCommit: (source: string) => void
   onGroupTimingChange: (groupId: string, start: number, end: number, mode?: GroupBoundaryEditMode) => void
@@ -98,7 +94,6 @@ const defaultManualSkipDuration = 1.5
 const manualEmptyZonePrefix = 'manual_cut_'
 const audioSilenceEmptyZonePrefix = 'audio_silence_'
 const captionRegionSliceSeparator = '__caption_slice__'
-const captionGapRegionPrefix = 'caption_gap_region_'
 const draftSelectionRegionId = 'draft-selection'
 const capCutProjectGapPrefix = 'capcut_project_gap_'
 const capCutSourceCutPrefix = 'capcut_source_cut_'
@@ -153,18 +148,12 @@ const normalizePlaybackRate = (rate: number) =>
 const getCaptionRegionId = (groupId: string, index: number, canEditTiming: boolean) =>
   canEditTiming ? groupId : `${groupId}${captionRegionSliceSeparator}${index}`
 
-const getCaptionGapRegionId = (gapId: string) => `${captionGapRegionPrefix}${gapId}`
-
-const getCaptionGapIdFromRegionId = (regionId: string) =>
-  regionId.startsWith(captionGapRegionPrefix) ? regionId.slice(captionGapRegionPrefix.length) : undefined
-
 const getManualEmptyZoneId = (sequence: number) =>
   `${manualEmptyZonePrefix}${Date.now().toString(36)}_${sequence}`
 
 const getRegionContent = (
   label: string,
   group: CaptionGroup,
-  isSelected: boolean,
   start = group.start,
   end = group.end,
 ) => {
@@ -183,11 +172,13 @@ const getRegionContent = (
     display: 'flex',
     alignItems: 'center',
     width: '100%',
+    maxWidth: '100%',
+    minWidth: '0',
     height: '100%',
     minHeight: '28px',
     overflow: 'hidden',
     padding: '0 12px',
-    color: isSelected ? '#ffffff' : '#103b35',
+    color: '#ffffff',
     fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
     fontSize: '12px',
     fontStyle: isPending ? 'italic' : 'normal',
@@ -201,37 +192,11 @@ const getRegionContent = (
   return content
 }
 
-const getCaptionGapContent = (gap: CaptionGap, isSelected: boolean) => {
-  const content = document.createElement('span')
-  content.title = `Caption gap ${formatSeconds(gap.start)} - ${formatSeconds(gap.end)}`
-  Object.assign(content.style, {
-    alignItems: 'center',
-    background: isSelected ? 'rgba(72, 116, 170, 0.16)' : 'rgba(72, 116, 170, 0.08)',
-    border: `1px dashed ${isSelected ? 'rgba(49, 90, 115, 0.58)' : 'rgba(49, 90, 115, 0.32)'}`,
-    borderRadius: '6px',
-    boxSizing: 'border-box',
-    color: '#315a73',
-    display: 'flex',
-    fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-    fontSize: '10px',
-    fontWeight: '800',
-    height: '100%',
-    justifyContent: 'center',
-    lineHeight: '1',
-    minWidth: '10px',
-    overflow: 'hidden',
-    padding: '0 6px',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    width: '100%',
-  })
+const getGroupWords = (group: CaptionGroup, wordMap: Map<string, CaptionWord>) =>
+  group.wordIds.map((wordId) => wordMap.get(wordId)).filter((word): word is CaptionWord => word !== undefined)
 
-  if (gap.duration >= 0.35) {
-    content.textContent = 'caption gap'
-  }
-
-  return content
-}
+const getSegmentWords = (words: CaptionWord[], start: number, end: number) =>
+  words.filter((word) => word.end > start && word.start < end)
 
 const isAudioSilenceCut = (cut: EmptyZoneCut) => cut.id.startsWith(audioSilenceEmptyZonePrefix)
 const isUserManagedCut = (cut: EmptyZoneCut) =>
@@ -249,15 +214,15 @@ const getSkipRegionContent = (start: number, end: number, isSelected: boolean) =
     height: '100%',
     overflow: 'hidden',
     padding: '0 8px',
-    background: isSelected
-      ? 'repeating-linear-gradient(135deg, rgba(226, 119, 75, 0.32) 0 6px, rgba(226, 119, 75, 0.14) 6px 12px)'
-      : 'repeating-linear-gradient(135deg, rgba(226, 119, 75, 0.18) 0 6px, rgba(226, 119, 75, 0.08) 6px 12px)',
-    color: '#7a341d',
+    background: 'var(--color-timeline-skip-mask)',
+    border: '1px solid var(--color-timeline-skip-border)',
+    borderRadius: '6px',
+    color: 'rgba(255, 255, 255, 0.58)',
     fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
     fontSize: '11px',
     fontWeight: '800',
     lineHeight: '1',
-    boxShadow: isSelected ? 'inset 0 0 0 2px rgba(177, 73, 48, 0.88)' : 'none',
+    boxShadow: isSelected ? 'inset 0 0 0 1px rgba(255, 255, 255, 0.16)' : 'none',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   })
@@ -338,8 +303,7 @@ const getDraftSelectionContent = (
 const getRegionColor = (isSelected: boolean) =>
   isSelected ? captionRegionColors.selected : captionRegionColors.default
 
-const getSkipRegionColor = (isSelected: boolean) =>
-  isSelected ? 'rgba(226, 119, 75, 0.32)' : 'rgba(226, 119, 75, 0.2)'
+const getSkipRegionColor = () => 'transparent'
 
 const getRegionContentElement = (region: Region) => {
   const content = region.getContent(true)
@@ -351,6 +315,32 @@ const hasSkipRegionResizeHandles = (region: Region) => Boolean(
   region.element?.querySelector('[part*="region-handle-right"]'),
 )
 
+const setSkipRegionHandleVisibility = (region: Region, isVisible: boolean) => {
+  region.element
+    ?.querySelectorAll<HTMLElement>('[part*="region-handle"]')
+    .forEach((handle) => {
+      handle.style.opacity = isVisible ? '1' : '0'
+    })
+}
+
+const syncSkipRegionHandleVisibility = (region: Region) => {
+  const element = region.element
+  if (!element) return
+
+  setSkipRegionHandleVisibility(region, element.matches(':hover') || element.contains(document.activeElement))
+}
+
+const installSkipRegionHandleHoverBehavior = (region: Region) => {
+  const element = region.element
+  if (!element || element.dataset.skipHandleHoverBound === 'true') return
+
+  element.dataset.skipHandleHoverBound = 'true'
+  element.addEventListener('pointerenter', () => setSkipRegionHandleVisibility(region, true))
+  element.addEventListener('pointerleave', () => setSkipRegionHandleVisibility(region, false))
+  element.addEventListener('focusin', () => setSkipRegionHandleVisibility(region, true))
+  element.addEventListener('focusout', () => setSkipRegionHandleVisibility(region, false))
+}
+
 const normalizeSkipRegionLayout = (region: Region) => {
   if (region.element) {
     region.element.style.top = '0%'
@@ -358,11 +348,29 @@ const normalizeSkipRegionLayout = (region: Region) => {
     region.element.style.cursor = 'default'
   }
 
+  installSkipRegionHandleHoverBehavior(region)
+  syncSkipRegionHandleVisibility(region)
   getRegionContentElement(region)?.style.setProperty('margin-top', '0px', 'important')
 }
 
 const normalizeSkipRegionLayouts = (skipRegionsPlugin: RegionsPlugin) => {
   skipRegionsPlugin.getRegions().forEach(normalizeSkipRegionLayout)
+}
+
+const groupPluginRegionsById = (regions: Region[]) =>
+  regions.reduce<Map<string, Region[]>>((regionsById, region) => {
+    const regions = regionsById.get(region.id)
+    if (regions) {
+      regions.push(region)
+      return regionsById
+    }
+
+    regionsById.set(region.id, [region])
+    return regionsById
+  }, new Map())
+
+const removePluginRegions = (regions: Region[] | undefined) => {
+  regions?.forEach((region) => region.remove())
 }
 
 const scheduleSkipRegionLayoutNormalization = (skipRegionsPlugin: RegionsPlugin) => {
@@ -485,11 +493,25 @@ const getCaptionSegmentLabel = (
   start: number,
   end: number,
 ) => {
-  if (group.textOverride) return group.textOverride
+  const groupWords = getGroupWords(group, wordMap)
+  const segmentWords = getSegmentWords(groupWords, start, end)
 
-  const segmentWords = group.wordIds
-    .map((wordId) => wordMap.get(wordId))
-    .filter((word): word is CaptionWord => word !== undefined && word.end > start && word.start < end)
+  if (!segmentWords.length) return ''
+
+  if (group.textOverride) {
+    const overrideWords = group.textOverride.trim().split(/\s+/).filter(Boolean)
+    if (overrideWords.length === groupWords.length) {
+      const segmentWordIds = new Set(segmentWords.map((word) => word.id))
+      return groupWords
+        .flatMap((word, index) => segmentWordIds.has(word.id) ? [overrideWords[index]] : [])
+        .join(' ')
+    }
+
+    const coversWholeGroup =
+      Math.abs(start - group.start) < segmentBoundaryTolerance &&
+      Math.abs(end - group.end) < segmentBoundaryTolerance
+    if (coversWholeGroup) return group.textOverride
+  }
 
   return segmentWords.map((word) => word.text).join(' ')
 }
@@ -586,6 +608,15 @@ const mergeEditableEmptyZoneCuts = (cuts: EmptyZoneCut[]) =>
       return mergedCuts
     }, [])
 
+const hasOverlappingEditableEmptyZoneCuts = (cuts: EmptyZoneCut[]) => {
+  const sortedCuts = cuts.slice().sort((left, right) => left.start - right.start || left.end - right.end)
+
+  return sortedCuts.some((cut, index) => {
+    const previous = sortedCuts[index - 1]
+    return previous !== undefined && cut.start <= previous.end + segmentBoundaryTolerance
+  })
+}
+
 const getDecodedChannelData = (audioData: AudioBuffer) =>
   Array.from({ length: Math.min(audioData.numberOfChannels, maxRenderedChannels) }, (_, index) =>
     audioData.getChannelData(index),
@@ -621,26 +652,30 @@ const getWaveSurferViewportDuration = (wavesurfer: WaveSurfer, fallbackZoom: num
 const getWaveSurferViewportCenterTime = (wavesurfer: WaveSurfer, fallbackZoom: number) =>
   getWaveSurferVisibleStartTime(wavesurfer, fallbackZoom) + getWaveSurferViewportDuration(wavesurfer, fallbackZoom) / 2
 
-const setWaveSurferVisibleStartTime = (wavesurfer: WaveSurfer, time: number, fallbackZoom: number) => {
-  const pixelsPerSecond = getWaveSurferPixelsPerSecond(wavesurfer, fallbackZoom)
-  wavesurfer.setScroll(Math.max(0, time) * pixelsPerSecond)
+const getWaveSurferFitZoom = (wavesurfer: WaveSurfer) => {
+  const duration = wavesurfer.getDuration()
+  if (duration <= 0) return timelineZoomConfig.minPixelsPerSecond
+
+  return Math.max(1, wavesurfer.getWidth() / duration)
 }
 
-const setWaveSurferViewportCenterTime = (wavesurfer: WaveSurfer, time: number, fallbackZoom: number) => {
-  const visibleDuration = getWaveSurferViewportDuration(wavesurfer, fallbackZoom)
-  setWaveSurferVisibleStartTime(wavesurfer, time - visibleDuration / 2, fallbackZoom)
+const clampTimelineZoom = (zoom: number, wavesurfer?: WaveSurfer) =>
+  clamp(
+    zoom,
+    wavesurfer?.getDecodedData() ? getWaveSurferFitZoom(wavesurfer) : timelineZoomConfig.minPixelsPerSecond,
+    timelineZoomConfig.maxPixelsPerSecond,
+  )
+
+const setWaveSurferVisibleStartTime = (wavesurfer: WaveSurfer, time: number) => {
+  wavesurfer.setScrollTime(Math.max(0, time))
 }
 
-const createTimelineHoverPlugin = (lineColor: string) =>
-  HoverPlugin.create({
-    lineColor,
-    lineWidth: 1,
-    labelBackground: '#173f39',
-    labelColor: '#ffffff',
-    labelSize: 11,
-    labelPreferLeft: true,
-    formatTimeCallback: formatTimelineLabel,
-  })
+const getWheelDeltaPixels = (event: WheelEvent) => {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaX * 16
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaX * window.innerWidth
+
+  return event.deltaX
+}
 
 const createTimelineZoomPlugin = () =>
   ZoomPlugin.create({
@@ -653,11 +688,9 @@ const createTimelineZoomPlugin = () =>
 
 export const useWaveSurferTimeline = ({
   audioUrl,
-  captionGaps,
   capCutTimelineMap,
   contentDuration,
   groups,
-  selectedCaptionGapId,
   selectedGroupId,
   skipState,
   setSkipState,
@@ -666,7 +699,6 @@ export const useWaveSurferTimeline = ({
   settings,
   selectedCapCutSourceCutBoundaryId,
   words,
-  onCaptionGapSelect,
   onCapCutSourceCutSelect,
   onHistoryCommit,
   onGroupTimingChange,
@@ -674,7 +706,14 @@ export const useWaveSurferTimeline = ({
 }: UseWaveSurferTimelineOptions) => {
   const waveformContainerRef = useRef<HTMLDivElement | null>(null)
   const timelineContainerRef = useRef<HTMLDivElement | null>(null)
+  const timelineHoverGuideRef = useRef<HTMLDivElement | null>(null)
+  const timelineHoverLabelRef = useRef<HTMLSpanElement | null>(null)
+  const timelineSurfaceRef = useRef<HTMLElement | null>(null)
   const captionContainerRef = useRef<HTMLDivElement | null>(null)
+  const minimapControlRef = useRef<HTMLDivElement | null>(null)
+  const minimapContainerRef = useRef<HTMLDivElement | null>(null)
+  const minimapSelectionRef = useRef<HTMLDivElement | null>(null)
+  const minimapViewportRef = useRef<HTMLDivElement | null>(null)
   const mainWaveSurferRef = useRef<WaveSurfer | null>(null)
   const captionWaveSurferRef = useRef<WaveSurfer | null>(null)
   const regionsPluginRef = useRef<RegionsPlugin | null>(null)
@@ -688,17 +727,17 @@ export const useWaveSurferTimeline = ({
   const isReconcilingRegionsRef = useRef(false)
   const isReconcilingSkipRegionsRef = useRef(false)
   const isSyncingScrollRef = useRef(false)
-  const isSyncingZoomRef = useRef(false)
+  const ignoredZoomEventSourcesRef = useRef(new Set<WaveSurfer>())
   const lastSkippedCutEndRef = useRef<number | undefined>(undefined)
   const manualEmptyZoneSequenceRef = useRef(0)
   const zoomLevelRef = useRef(timelineZoomConfig.defaultPixelsPerSecond)
   const syncTimelineAxisRef = useRef<() => void>(() => undefined)
+  const syncMinimapNavigationRef = useRef<() => void>(() => undefined)
   const groupsRef = useLatestRef(groups)
   const selectedGroupIdRef = useLatestRef(selectedGroupId)
   const onGroupTimingChangeRef = useLatestRef(onGroupTimingChange)
   const onHistoryCommitRef = useLatestRef(onHistoryCommit)
   const onTranscribeRangeRef = useLatestRef(onTranscribeRange)
-  const onCaptionGapSelectRef = useLatestRef(onCaptionGapSelect)
   const onCapCutSourceCutSelectRef = useLatestRef(onCapCutSourceCutSelect)
   const isCaptionRegionPointerDownRef = useRef(false)
   const isIndependentCaptionTimingEditRef = useRef(false)
@@ -818,25 +857,22 @@ export const useWaveSurferTimeline = ({
     () =>
       groups.flatMap((group) => {
         const segments = subtractEmptyZoneCuts(group.start, group.end, maskedEmptyZoneCuts)
+          .map((segment, index) => ({
+            ...segment,
+            index,
+            label: getCaptionSegmentLabel(group, wordMap, segment.start, segment.end),
+          }))
+          .filter((segment) => segment.label)
+        const canEditTiming = segments.length === 1
 
-        return segments.flatMap((segment, index) => {
-          const canEditTiming =
-            segments.length === 1 &&
-            Math.abs(segment.start - group.start) < segmentBoundaryTolerance &&
-            Math.abs(segment.end - group.end) < segmentBoundaryTolerance
-          const label = getCaptionSegmentLabel(group, wordMap, segment.start, segment.end)
-
-          if (!label) return []
-
-          return [{
-            canEditTiming,
-            end: segment.end,
-            group,
-            id: getCaptionRegionId(group.id, index, canEditTiming),
-            label,
-            start: segment.start,
-          }]
-        })
+        return segments.map((segment) => ({
+          canEditTiming,
+          end: segment.end,
+          group,
+          id: getCaptionRegionId(group.id, segment.index, canEditTiming),
+          label: segment.label,
+          start: segment.start,
+        }))
       }),
     [groups, maskedEmptyZoneCuts, wordMap],
   )
@@ -856,7 +892,15 @@ export const useWaveSurferTimeline = ({
     loopRestartTimeoutRef.current = undefined
   }, [])
 
-  const setZoomLevel = useCallback((nextZoom: number) => {
+  const zoomWaveSurferWithoutFeedback = useCallback((wavesurfer: WaveSurfer, zoom: number) => {
+    ignoredZoomEventSourcesRef.current.add(wavesurfer)
+    wavesurfer.zoom(zoom)
+    window.requestAnimationFrame(() => {
+      ignoredZoomEventSourcesRef.current.delete(wavesurfer)
+    })
+  }, [])
+
+  const setSynchronizedVisibleStart = useCallback((visibleStart: number, zoom = zoomLevelRef.current) => {
     const mainWaveSurfer = mainWaveSurferRef.current
     const captionWaveSurfer = captionWaveSurferRef.current
     const sourceWaveSurfer = mainWaveSurfer?.getDecodedData()
@@ -864,42 +908,63 @@ export const useWaveSurferTimeline = ({
       : captionWaveSurfer?.getDecodedData()
         ? captionWaveSurfer
         : undefined
-    const centerTime = sourceWaveSurfer
+    if (!sourceWaveSurfer) return
+
+    const maxStart = Math.max(
+      0,
+      sourceWaveSurfer.getDuration() - getWaveSurferViewportDuration(sourceWaveSurfer, zoom),
+    )
+    const nextStart = clamp(visibleStart, 0, maxStart)
+
+    if (mainWaveSurfer?.getDecodedData()) {
+      setWaveSurferVisibleStartTime(mainWaveSurfer, nextStart)
+    }
+    if (captionWaveSurfer?.getDecodedData()) {
+      setWaveSurferVisibleStartTime(captionWaveSurfer, nextStart)
+    }
+    syncTimelineAxisRef.current()
+    syncMinimapNavigationRef.current()
+  }, [])
+
+  const applySynchronizedZoom = useCallback((nextZoom: number, visibleStart?: number) => {
+    const mainWaveSurfer = mainWaveSurferRef.current
+    const captionWaveSurfer = captionWaveSurferRef.current
+    const sourceWaveSurfer = mainWaveSurfer?.getDecodedData()
+      ? mainWaveSurfer
+      : captionWaveSurfer?.getDecodedData()
+        ? captionWaveSurfer
+        : undefined
+    const zoom = clampTimelineZoom(nextZoom, sourceWaveSurfer)
+    if (!sourceWaveSurfer) {
+      zoomLevelRef.current = zoom
+      setZoomLevelState(zoom)
+      return
+    }
+
+    const centerTime = sourceWaveSurfer && visibleStart === undefined
       ? getWaveSurferViewportCenterTime(sourceWaveSurfer, zoomLevelRef.current)
       : undefined
-    const zoom = clamp(
-      nextZoom,
-      timelineZoomConfig.minPixelsPerSecond,
-      timelineZoomConfig.maxPixelsPerSecond,
-    )
+
     zoomLevelRef.current = zoom
     setZoomLevelState(zoom)
-
-    isSyncingZoomRef.current = true
     ;[mainWaveSurfer, captionWaveSurfer].forEach((wavesurfer) => {
       if (!wavesurfer?.getDecodedData()) return
-      wavesurfer.zoom(zoom)
+      zoomWaveSurferWithoutFeedback(wavesurfer, zoom)
     })
+
     window.requestAnimationFrame(() => {
-      if (centerTime !== undefined) {
-        if (mainWaveSurfer?.getDecodedData()) {
-          setWaveSurferViewportCenterTime(mainWaveSurfer, centerTime, zoom)
-        }
-        const visibleStart = mainWaveSurfer?.getDecodedData()
-          ? getWaveSurferVisibleStartTime(mainWaveSurfer, zoom)
-          : centerTime - (
-            captionWaveSurfer?.getDecodedData()
-              ? getWaveSurferViewportDuration(captionWaveSurfer, zoom) / 2
-              : 0
-          )
-        if (captionWaveSurfer?.getDecodedData()) {
-          setWaveSurferVisibleStartTime(captionWaveSurfer, visibleStart, zoom)
-        }
-      }
-      syncTimelineAxisRef.current()
-      isSyncingZoomRef.current = false
+      const nextVisibleStart =
+        visibleStart ??
+        (centerTime !== undefined
+          ? centerTime - getWaveSurferViewportDuration(sourceWaveSurfer, zoom) / 2
+          : getWaveSurferVisibleStartTime(sourceWaveSurfer, zoom))
+      setSynchronizedVisibleStart(nextVisibleStart, zoom)
     })
-  }, [])
+  }, [setSynchronizedVisibleStart, zoomWaveSurferWithoutFeedback])
+
+  const setZoomLevel = useCallback((nextZoom: number) => {
+    applySynchronizedZoom(nextZoom)
+  }, [applySynchronizedZoom])
 
   const getManualCutId = useCallback(() => getManualEmptyZoneId(manualEmptyZoneSequenceRef.current++), [])
 
@@ -950,6 +1015,38 @@ export const useWaveSurferTimeline = ({
       manualCuts,
     }
   }, [getManualCutId])
+
+  useEffect(() => {
+    if (!audioUrl || !isEmptyZoneSourceCurrent || !hasOverlappingEditableEmptyZoneCuts(editableEmptyZoneCuts)) {
+      return
+    }
+
+    setSkipState((current) => {
+      const baseState = current.sourceUrl === audioUrl ? current : createTimelineSkipState(audioUrl)
+      const existingEdits =
+        baseState.signature === emptyZoneSignature ? new Map(baseState.edits) : new Map<string, { start: number; end: number }>()
+      const existingDeletedAutoIds =
+        baseState.signature === emptyZoneSignature ? new Set(baseState.deletedAutoIds) : new Set<string>()
+      const reconciledCuts = reconcileOverlappingSkipCuts(editableEmptyZoneCuts, selectedSkipRegionId)
+
+      return {
+        ...baseState,
+        deletedAutoIds: new Set([...existingDeletedAutoIds, ...reconciledCuts.deletedAutoIds]),
+        edits: new Map([...existingEdits, ...reconciledCuts.edits]),
+        manualCuts: reconciledCuts.manualCuts,
+        signature: emptyZoneSignature,
+        sourceUrl: audioUrl,
+      }
+    })
+  }, [
+    audioUrl,
+    editableEmptyZoneCuts,
+    emptyZoneSignature,
+    isEmptyZoneSourceCurrent,
+    reconcileOverlappingSkipCuts,
+    selectedSkipRegionId,
+    setSkipState,
+  ])
 
   const applySilenceDetectionDraft = useCallback((draft: SilenceDetectionDraft) => {
     const duration = mainWaveSurferRef.current?.getDuration() ?? timelineDuration
@@ -1572,11 +1669,26 @@ export const useWaveSurferTimeline = ({
     const waveformContainer = waveformContainerRef.current
     const timelineContainer = timelineContainerRef.current
     const captionContainer = captionContainerRef.current
-    if (!waveformContainer || !timelineContainer || !captionContainer) return undefined
+    const minimapControl = minimapControlRef.current
+    const minimapContainer = minimapContainerRef.current
+    const minimapSelection = minimapSelectionRef.current
+    const minimapViewport = minimapViewportRef.current
+    if (
+      !waveformContainer ||
+      !timelineContainer ||
+      !captionContainer ||
+      !minimapControl ||
+      !minimapContainer ||
+      !minimapSelection ||
+      !minimapViewport
+    ) {
+      return undefined
+    }
 
     const subscriptions: Array<() => void> = []
     let captionSubscriptions: Array<() => void> = []
     let isDisposed = false
+    let minimapSyncFrame: number | undefined
     let timelineSyncFrame: number | undefined
 
     const syncTimelineAxis = () => {
@@ -1586,9 +1698,43 @@ export const useWaveSurferTimeline = ({
       const timelineWrapper = timelineContainer.querySelector<HTMLElement>('[part="timeline-wrapper"]')
       if (!timelineWrapper) return
 
-      timelineWrapper.style.width = `${mainWaveSurfer.getWrapper().scrollWidth}px`
+      const duration = mainWaveSurfer.getDuration()
+      const scrollWidth = mainWaveSurfer.getWrapper().scrollWidth
+      const pixelsPerSecond = duration > 0 ? scrollWidth / duration : zoomLevelRef.current
+      timelineSurfaceRef.current?.style.setProperty(
+        '--timeline-grid-step',
+        `${Math.max(1, pixelsPerSecond)}px`,
+      )
+
+      timelineWrapper.style.width = `${scrollWidth}px`
       timelineWrapper.style.transform = `translateX(${-mainWaveSurfer.getScroll()}px)`
       timelineWrapper.style.willChange = 'transform'
+    }
+
+    const syncMinimapNavigation = () => {
+      const mainWaveSurfer = mainWaveSurferRef.current
+      if (!mainWaveSurfer?.getDecodedData()) return
+
+      const duration = mainWaveSurfer.getDuration()
+      if (duration <= 0) return
+
+      const zoom = zoomLevelRef.current
+      const visibleStart = getWaveSurferVisibleStartTime(mainWaveSurfer, zoom)
+      const visibleDuration = getWaveSurferViewportDuration(mainWaveSurfer, zoom)
+      const left = clamp(visibleStart / duration, 0, 1) * 100
+      const width = clamp(visibleDuration / duration, 0, 1) * 100
+
+      minimapViewport.style.left = `${left}%`
+      minimapViewport.style.width = `${Math.min(width, 100 - left)}%`
+    }
+
+    const scheduleMinimapNavigationSync = () => {
+      if (minimapSyncFrame !== undefined) return
+
+      minimapSyncFrame = window.requestAnimationFrame(() => {
+        minimapSyncFrame = undefined
+        syncMinimapNavigation()
+      })
     }
 
     const scheduleTimelineAxisSync = () => {
@@ -1601,6 +1747,7 @@ export const useWaveSurferTimeline = ({
     }
 
     syncTimelineAxisRef.current = scheduleTimelineAxisSync
+    syncMinimapNavigationRef.current = scheduleMinimapNavigationSync
 
     const destroyCaptionWaveSurfer = () => {
       captionSubscriptions.forEach((unsubscribe) => unsubscribe())
@@ -1617,11 +1764,11 @@ export const useWaveSurferTimeline = ({
       setWaveSurferVisibleStartTime(
         target,
         visibleStartTime ?? getWaveSurferVisibleStartTime(source, zoomLevelRef.current),
-        zoomLevelRef.current,
       )
       if (source === mainWaveSurfer || target === mainWaveSurfer) {
         syncTimelineAxis()
       }
+      scheduleMinimapNavigationSync()
       window.requestAnimationFrame(() => {
         isSyncingScrollRef.current = false
       })
@@ -1642,7 +1789,7 @@ export const useWaveSurferTimeline = ({
       autoScroll: true,
       dragToSeek: false,
       fillParent: true,
-      hideScrollbar: false,
+      hideScrollbar: true,
       interact: true,
       minPxPerSec: zoomLevelRef.current,
       audioRate: playbackRateRef.current,
@@ -1652,20 +1799,19 @@ export const useWaveSurferTimeline = ({
           height: 28,
           formatTimeCallback: formatTimelineLabel,
         }),
-        createTimelineHoverPlugin('rgba(23, 63, 57, 0.68)'),
         createTimelineZoomPlugin(),
         skipRegionsPlugin,
         draftRegionsPlugin,
         capCutRegionsPlugin,
         MinimapPlugin.create({
+          container: minimapContainer,
           height: 28,
+          interact: false,
           waveColor: '#dbe9e5',
           progressColor: '#9ed1c7',
           cursorColor: '#173f39',
           cursorWidth: 1,
-          barWidth: 1,
-          barGap: 1,
-          overlayColor: 'rgba(20, 146, 127, 0.12)',
+          overlayColor: 'transparent',
         }),
       ],
     })
@@ -1685,27 +1831,235 @@ export const useWaveSurferTimeline = ({
       return () => scrollContainer.removeEventListener('wheel', handleWheel, { capture: true })
     }
 
-    const syncZoom = (source: WaveSurfer, target: WaveSurfer | null, nextZoom: number) => {
-      zoomLevelRef.current = nextZoom
-      setZoomLevelState(nextZoom)
+    const installTimelineSurfaceScroll = () => {
+      const timelineSurface = timelineSurfaceRef.current
+      if (!timelineSurface) return undefined
 
-      if (!target?.getDecodedData() || isSyncingZoomRef.current) {
-        scheduleTimelineAxisSync()
-        return
+      const handleWheel = (event: WheelEvent) => {
+        if (event.ctrlKey || event.metaKey || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
+
+        const source = mainWaveSurferRef.current
+        if (!source?.getDecodedData()) return
+
+        const deltaPixels = getWheelDeltaPixels(event)
+        if (Math.abs(deltaPixels) < 1) return
+
+        event.preventDefault()
+        event.stopPropagation()
+
+        const zoom = zoomLevelRef.current
+        const pixelsPerSecond = Math.max(getWaveSurferPixelsPerSecond(source, zoom), 1)
+        const visibleDuration = getWaveSurferViewportDuration(source, zoom)
+        const duration = source.getDuration()
+        const maxStart = Math.max(0, duration - visibleDuration)
+        const nextStart = clamp(
+          getWaveSurferVisibleStartTime(source, zoom) + deltaPixels / pixelsPerSecond,
+          0,
+          maxStart,
+        )
+
+        setSynchronizedVisibleStart(nextStart, zoom)
       }
 
-      isSyncingZoomRef.current = true
-      target.zoom(nextZoom)
-      window.requestAnimationFrame(() => {
-        setWaveSurferVisibleStartTime(
-          target,
-          getWaveSurferVisibleStartTime(source, nextZoom),
-          nextZoom,
-        )
-        if (source === mainWaveSurfer || target === mainWaveSurfer) {
-          syncTimelineAxis()
+      timelineSurface.addEventListener('wheel', handleWheel, { capture: true, passive: false })
+
+      return () => timelineSurface.removeEventListener('wheel', handleWheel, { capture: true })
+    }
+
+    const installTimelineHoverGuide = () => {
+      const timelineSurface = timelineSurfaceRef.current
+      const hoverGuide = timelineHoverGuideRef.current
+      const hoverLabel = timelineHoverLabelRef.current
+      if (!timelineSurface || !hoverGuide || !hoverLabel) return undefined
+
+      const hideHoverGuide = () => {
+        hoverGuide.style.opacity = '0'
+      }
+
+      const handlePointerMove = (event: PointerEvent) => {
+        const source = mainWaveSurferRef.current
+        if (!source?.getDecodedData()) {
+          hideHoverGuide()
+          return
         }
-        isSyncingZoomRef.current = false
+
+        const duration = source.getDuration()
+        if (duration <= 0) {
+          hideHoverGuide()
+          return
+        }
+
+        const surfaceRect = timelineSurface.getBoundingClientRect()
+        const wrapperRect = source.getWrapper().getBoundingClientRect()
+        const zoom = zoomLevelRef.current
+        const pixelsPerSecond = Math.max(getWaveSurferPixelsPerSecond(source, zoom), 1)
+        const visibleStart = getWaveSurferVisibleStartTime(source, zoom)
+        const pointerXInWrapper = clamp(event.clientX - wrapperRect.left, 0, wrapperRect.width)
+        const time = clamp(visibleStart + pointerXInWrapper / pixelsPerSecond, 0, duration)
+        const x = (time - visibleStart) * pixelsPerSecond + wrapperRect.left - surfaceRect.left
+
+        hoverGuide.style.transform = `translateX(${Math.round(x)}px)`
+        hoverGuide.style.opacity = '1'
+        hoverLabel.textContent = formatTimelineLabel(time)
+      }
+
+      timelineSurface.addEventListener('pointermove', handlePointerMove)
+      timelineSurface.addEventListener('pointerleave', hideHoverGuide)
+
+      return () => {
+        timelineSurface.removeEventListener('pointermove', handlePointerMove)
+        timelineSurface.removeEventListener('pointerleave', hideHoverGuide)
+      }
+    }
+
+    type MinimapPointerState =
+      | { offsetTime: number; pointerId: number; type: 'pan' }
+      | { currentX: number; pointerId: number; startX: number; type: 'select' }
+
+    const installMinimapNavigation = () => {
+      let pointerState: MinimapPointerState | undefined
+
+      const getControlRect = () => minimapControl.getBoundingClientRect()
+      const getPointerX = (event: PointerEvent) => {
+        const rect = getControlRect()
+        return clamp(event.clientX - rect.left, 0, Math.max(rect.width, 1))
+      }
+      const getTimeFromX = (x: number) => {
+        const duration = mainWaveSurfer.getDuration()
+        const rect = getControlRect()
+        return duration * clamp(x / Math.max(rect.width, 1), 0, 1)
+      }
+      const setSelectionPreview = (startX: number, endX: number) => {
+        const rect = getControlRect()
+        const left = clamp(Math.min(startX, endX), 0, rect.width)
+        const width = clamp(Math.abs(endX - startX), 0, rect.width - left)
+
+        minimapSelection.style.display = width >= 1 ? 'block' : 'none'
+        minimapSelection.style.left = `${left}px`
+        minimapSelection.style.width = `${width}px`
+      }
+      const clearSelectionPreview = () => {
+        minimapSelection.style.display = 'none'
+        minimapSelection.style.width = '0px'
+      }
+      const clearPanState = () => {
+        minimapControl.classList.remove('is-panning')
+      }
+
+      const handlePointerDown = (event: PointerEvent) => {
+        if (event.button !== 0 || !mainWaveSurfer.getDecodedData()) return
+
+        event.preventDefault()
+        const x = getPointerX(event)
+        const duration = mainWaveSurfer.getDuration()
+        const zoom = zoomLevelRef.current
+        const visibleStart = getWaveSurferVisibleStartTime(mainWaveSurfer, zoom)
+        const visibleEnd = visibleStart + getWaveSurferViewportDuration(mainWaveSurfer, zoom)
+        const pointerTime = getTimeFromX(x)
+        const isInsideViewport = pointerTime >= visibleStart && pointerTime <= visibleEnd
+
+        minimapControl.setPointerCapture(event.pointerId)
+        if (isInsideViewport) {
+          pointerState = {
+            offsetTime: pointerTime - visibleStart,
+            pointerId: event.pointerId,
+            type: 'pan',
+          }
+          minimapControl.classList.add('is-panning')
+          return
+        }
+
+        pointerState = {
+          currentX: x,
+          pointerId: event.pointerId,
+          startX: x,
+          type: 'select',
+        }
+        setSelectionPreview(x, x)
+        if (duration <= 0) clearSelectionPreview()
+      }
+
+      const handlePointerMove = (event: PointerEvent) => {
+        if (!pointerState || pointerState.pointerId !== event.pointerId) return
+
+        event.preventDefault()
+        const x = getPointerX(event)
+        if (pointerState.type === 'pan') {
+          setSynchronizedVisibleStart(getTimeFromX(x) - pointerState.offsetTime, zoomLevelRef.current)
+          return
+        }
+
+        pointerState.currentX = x
+        setSelectionPreview(pointerState.startX, x)
+      }
+
+      const handlePointerUp = (event: PointerEvent) => {
+        if (!pointerState || pointerState.pointerId !== event.pointerId) return
+
+        event.preventDefault()
+        const state = pointerState
+        pointerState = undefined
+        if (minimapControl.hasPointerCapture(event.pointerId)) {
+          minimapControl.releasePointerCapture(event.pointerId)
+        }
+        clearPanState()
+
+        if (state.type === 'pan') return
+
+        clearSelectionPreview()
+        const duration = mainWaveSurfer.getDuration()
+        const rect = getControlRect()
+        const startX = clamp(Math.min(state.startX, state.currentX), 0, rect.width)
+        const endX = clamp(Math.max(state.startX, state.currentX), 0, rect.width)
+        const selectedDuration = duration * ((endX - startX) / Math.max(rect.width, 1))
+        const selectedStart = getTimeFromX(startX)
+
+        if (endX - startX < 8 || selectedDuration < 0.1) {
+          const visibleDuration = getWaveSurferViewportDuration(mainWaveSurfer, zoomLevelRef.current)
+          setSynchronizedVisibleStart(getTimeFromX(state.currentX) - visibleDuration / 2)
+          return
+        }
+
+        applySynchronizedZoom(mainWaveSurfer.getWidth() / selectedDuration, selectedStart)
+      }
+
+      const handlePointerCancel = (event: PointerEvent) => {
+        if (!pointerState || pointerState.pointerId !== event.pointerId) return
+        pointerState = undefined
+        clearSelectionPreview()
+        clearPanState()
+      }
+
+      minimapControl.addEventListener('pointerdown', handlePointerDown)
+      minimapControl.addEventListener('pointermove', handlePointerMove)
+      minimapControl.addEventListener('pointerup', handlePointerUp)
+      minimapControl.addEventListener('pointercancel', handlePointerCancel)
+      minimapControl.addEventListener('lostpointercapture', handlePointerCancel)
+
+      return () => {
+        minimapControl.removeEventListener('pointerdown', handlePointerDown)
+        minimapControl.removeEventListener('pointermove', handlePointerMove)
+        minimapControl.removeEventListener('pointerup', handlePointerUp)
+        minimapControl.removeEventListener('pointercancel', handlePointerCancel)
+        minimapControl.removeEventListener('lostpointercapture', handlePointerCancel)
+      }
+    }
+
+    const syncZoom = (source: WaveSurfer, target: WaveSurfer | null, nextZoom: number) => {
+      if (ignoredZoomEventSourcesRef.current.delete(source)) return
+
+      const zoom = clampTimelineZoom(nextZoom, source)
+      zoomLevelRef.current = zoom
+      setZoomLevelState(zoom)
+      if (Math.abs(nextZoom - zoom) > 0.001) {
+        zoomWaveSurferWithoutFeedback(source, zoom)
+      }
+      if (target?.getDecodedData()) {
+        zoomWaveSurferWithoutFeedback(target, zoom)
+      }
+      window.requestAnimationFrame(() => {
+        const visibleStart = getWaveSurferVisibleStartTime(source, zoom)
+        setSynchronizedVisibleStart(visibleStart, zoom)
       })
     }
 
@@ -1725,12 +2079,11 @@ export const useWaveSurferTimeline = ({
         autoScroll: false,
         dragToSeek: { debounceTime: 80 },
         fillParent: true,
-        hideScrollbar: false,
+        hideScrollbar: true,
         interact: true,
         maxPeak,
         minPxPerSec: zoomLevelRef.current,
         plugins: [
-          createTimelineHoverPlugin('rgba(23, 63, 57, 0.48)'),
           createTimelineZoomPlugin(),
           regionsPlugin,
         ],
@@ -1741,25 +2094,13 @@ export const useWaveSurferTimeline = ({
       setWaveSurferVisibleStartTime(
         captionWaveSurfer,
         getWaveSurferVisibleStartTime(mainWaveSurfer, zoomLevelRef.current),
-        zoomLevelRef.current,
       )
       setRegionsReadyToken((current) => current + 1)
       captionSubscriptions = [
         regionsPlugin.on('region-clicked', (region, event) => {
           event.stopPropagation()
-          const captionGapId = getCaptionGapIdFromRegionId(region.id)
-          if (captionGapId) {
-            setSelectedGroupId(undefined)
-            setSelectedSkipRegionId(undefined)
-            onCapCutSourceCutSelectRef.current?.(undefined)
-            onCaptionGapSelectRef.current?.(captionGapId)
-            setStatusRef.current('Caption gap selected. Audio stays; captions are hidden in this range.')
-            return
-          }
-
           const segment = captionRegionSegmentMapRef.current.get(region.id)
           if (segment) {
-            onCaptionGapSelectRef.current?.(undefined)
             onCapCutSourceCutSelectRef.current?.(undefined)
             handleTimelineGroupSelectRef.current(segment.group.id, {
               start: segment.start,
@@ -1791,7 +2132,6 @@ export const useWaveSurferTimeline = ({
         }),
         captionWaveSurfer.on('interaction', (time) => {
           seekToRef.current(time)
-          onCaptionGapSelectRef.current?.(undefined)
           onCapCutSourceCutSelectRef.current?.(undefined)
           setStatusRef.current(`Playhead moved to ${formatSeconds(time)}. Space plays the full timeline from here.`)
         }),
@@ -1822,6 +2162,9 @@ export const useWaveSurferTimeline = ({
 
     subscriptions.push(
       installModifierZoomGuard(mainWaveSurfer) ?? (() => undefined),
+      installTimelineSurfaceScroll() ?? (() => undefined),
+      installTimelineHoverGuide() ?? (() => undefined),
+      installMinimapNavigation(),
       mainWaveSurfer.on('ready', (duration) => {
         const decodedData = mainWaveSurfer.getDecodedData()
         const maxPeak = decodedData ? getDecodedMaxPeak(decodedData) : 1
@@ -1832,6 +2175,7 @@ export const useWaveSurferTimeline = ({
         mainWaveSurfer.setPlaybackRate(playbackRateRef.current, true)
         setIsReady(true)
         syncTimelineAxis()
+        syncMinimapNavigation()
         setSkipRegionsReadyToken((current) => current + 1)
         setDraftRegionsReadyToken((current) => current + 1)
         subscriptions.push(
@@ -2000,12 +2344,12 @@ export const useWaveSurferTimeline = ({
         captionWaveSurferRef.current?.setTime(time)
         setSelectedGroupId(undefined)
         setSelectedSkipRegionId(undefined)
-        onCaptionGapSelectRef.current?.(undefined)
         onCapCutSourceCutSelectRef.current?.(undefined)
         setStatusRef.current(`Playhead moved to ${formatSeconds(time)}. Space plays the full timeline from here.`)
       }),
       mainWaveSurfer.on('scroll', (visibleStartTime) => {
         syncTimelineAxis()
+        scheduleMinimapNavigationSync()
         const captionWaveSurfer = captionWaveSurferRef.current
         if (captionWaveSurfer) syncScroll(mainWaveSurfer, captionWaveSurfer, visibleStartTime)
       }),
@@ -2014,6 +2358,7 @@ export const useWaveSurferTimeline = ({
       }),
       mainWaveSurfer.on('redraw', () => {
         scheduleTimelineAxisSync()
+        scheduleMinimapNavigationSync()
       }),
       mainWaveSurfer.on('error', (error) => {
         setStatusRef.current(error.message)
@@ -2023,6 +2368,10 @@ export const useWaveSurferTimeline = ({
     return () => {
       isDisposed = true
       syncTimelineAxisRef.current = () => undefined
+      syncMinimapNavigationRef.current = () => undefined
+      if (minimapSyncFrame !== undefined) {
+        window.cancelAnimationFrame(minimapSyncFrame)
+      }
       if (timelineSyncFrame !== undefined) {
         window.cancelAnimationFrame(timelineSyncFrame)
       }
@@ -2038,6 +2387,7 @@ export const useWaveSurferTimeline = ({
       setIsPlaying(false)
     }
   }, [
+    applySynchronizedZoom,
     audioUrl,
     clearLoopRestartTimeout,
     clearSegmentPlayback,
@@ -2046,18 +2396,19 @@ export const useWaveSurferTimeline = ({
     emptyZoneSignatureRef,
     handleTimelineGroupSelectRef,
     maskedEmptyZoneCutsRef,
-    onCaptionGapSelectRef,
     onCapCutSourceCutSelectRef,
     onGroupTimingChangeRef,
     onHistoryCommitRef,
     reconcileOverlappingSkipCuts,
     seekToRef,
     setSelectedGroupId,
+    setSynchronizedVisibleStart,
     setStatusRef,
     setSkipState,
     stopActiveSegmentIfInvalid,
     stopActiveSegmentOnMaskOverlap,
     startSegmentPlaybackRef,
+    zoomWaveSurferWithoutFeedback,
   ])
 
   useEffect(() => {
@@ -2065,10 +2416,7 @@ export const useWaveSurferTimeline = ({
     if (!regionsPlugin) return
 
     const existingRegions = new Map(regionsPlugin.getRegions().map((region) => [region.id, region]))
-    const nextRegionIds = new Set([
-      ...captionRegionSegments.map((segment) => segment.id),
-      ...captionGaps.map((gap) => getCaptionGapRegionId(gap.id)),
-    ])
+    const nextRegionIds = new Set(captionRegionSegments.map((segment) => segment.id))
 
     isReconcilingRegionsRef.current = true
 
@@ -2081,7 +2429,7 @@ export const useWaveSurferTimeline = ({
     captionRegionSegments.forEach((segment) => {
       const region = existingRegions.get(segment.id)
       const isSelected = segment.group.id === selectedGroupId
-      const content = getRegionContent(segment.label, segment.group, isSelected, segment.start, segment.end)
+      const content = getRegionContent(segment.label, segment.group, segment.start, segment.end)
       const color = getRegionColor(isSelected)
 
       if (!region) {
@@ -2108,61 +2456,34 @@ export const useWaveSurferTimeline = ({
       })
     })
 
-    captionGaps.forEach((gap) => {
-      const regionId = getCaptionGapRegionId(gap.id)
-      const region = existingRegions.get(regionId)
-      const isSelected = gap.id === selectedCaptionGapId
-      const content = getCaptionGapContent(gap, isSelected)
-      const color = isSelected ? 'rgba(72, 116, 170, 0.16)' : 'rgba(72, 116, 170, 0.08)'
-
-      if (!region) {
-        regionsPlugin.addRegion({
-          id: regionId,
-          start: gap.start,
-          end: gap.end,
-          content,
-          color,
-          drag: false,
-          resize: false,
-        })
-        return
-      }
-
-      region.setOptions({
-        start: gap.start,
-        end: gap.end,
-        content,
-        color,
-        drag: false,
-        resize: false,
-      })
-    })
-
     window.requestAnimationFrame(() => {
       isReconcilingRegionsRef.current = false
     })
-  }, [captionGaps, captionRegionSegments, regionsReadyToken, selectedCaptionGapId, selectedGroupId])
+  }, [captionRegionSegments, regionsReadyToken, selectedGroupId])
 
   useEffect(() => {
     const skipRegionsPlugin = skipRegionsPluginRef.current
     if (!skipRegionsPlugin) return
 
-    const existingRegions = new Map(skipRegionsPlugin.getRegions().map((region) => [region.id, region]))
+    const existingRegionsById = groupPluginRegionsById(skipRegionsPlugin.getRegions())
     const nextRegionIds = new Set(editableEmptyZoneCuts.map((cut) => cut.id))
 
     isReconcilingSkipRegionsRef.current = true
 
-    existingRegions.forEach((region, regionId) => {
+    existingRegionsById.forEach((regions, regionId) => {
       if (!nextRegionIds.has(regionId)) {
-        region.remove()
+        removePluginRegions(regions)
       }
     })
 
     editableEmptyZoneCuts.forEach((cut) => {
-      const region = existingRegions.get(cut.id)
+      const regions = existingRegionsById.get(cut.id)
+      const [region, ...duplicateRegions] = regions ?? []
       const isSelected = cut.id === selectedSkipRegionId
       const content = getSkipRegionContent(cut.start, cut.end, isSelected)
-      const color = getSkipRegionColor(isSelected)
+      const color = getSkipRegionColor()
+
+      removePluginRegions(duplicateRegions)
 
       if (!region || !region.element || !hasSkipRegionResizeHandles(region)) {
         region?.remove()
@@ -2325,13 +2646,8 @@ export const useWaveSurferTimeline = ({
 
     const groupCenter = (selectedStart + selectedEnd) / 2
     const targetStart = clamp(groupCenter - visibleDuration / 2, 0, Math.max(0, duration - visibleDuration))
-    mainWaveSurfer.setScrollTime(targetStart)
-    const captionWaveSurfer = captionWaveSurferRef.current
-    if (captionWaveSurfer?.getDecodedData()) {
-      setWaveSurferVisibleStartTime(captionWaveSurfer, targetStart, zoomLevelRef.current)
-    }
-    syncTimelineAxisRef.current()
-  }, [captionRegionSegments, groups, selectedGroupId])
+    setSynchronizedVisibleStart(targetStart, zoomLevelRef.current)
+  }, [captionRegionSegments, groups, selectedGroupId, setSynchronizedVisibleStart])
 
   useEffect(() => {
     if (!activeSegmentRef.current) return undefined
@@ -2412,6 +2728,10 @@ export const useWaveSurferTimeline = ({
     isReady,
     keptTimelineRanges,
     loopedGroupId,
+    minimapControlRef,
+    minimapContainerRef,
+    minimapSelectionRef,
+    minimapViewportRef,
     playGroup,
     playbackRate,
     playbackSpeedConfig,
@@ -2431,7 +2751,10 @@ export const useWaveSurferTimeline = ({
     silenceDetectionSettings,
     startLoopGroup,
     stopPlayback,
+    timelineSurfaceRef,
     timelineContainerRef,
+    timelineHoverGuideRef,
+    timelineHoverLabelRef,
     timelineDuration,
     togglePlayback,
     waveformContainerRef,
@@ -2441,6 +2764,13 @@ export const useWaveSurferTimeline = ({
 
 export type WaveSurferTimelineRefs = {
   captionContainerRef: RefObject<HTMLDivElement | null>
+  minimapControlRef: RefObject<HTMLDivElement | null>
+  minimapContainerRef: RefObject<HTMLDivElement | null>
+  minimapSelectionRef: RefObject<HTMLDivElement | null>
+  minimapViewportRef: RefObject<HTMLDivElement | null>
+  timelineSurfaceRef: RefObject<HTMLElement | null>
   timelineContainerRef: RefObject<HTMLDivElement | null>
+  timelineHoverGuideRef: RefObject<HTMLDivElement | null>
+  timelineHoverLabelRef: RefObject<HTMLSpanElement | null>
   waveformContainerRef: RefObject<HTMLDivElement | null>
 }

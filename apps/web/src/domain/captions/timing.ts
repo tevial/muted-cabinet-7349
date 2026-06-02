@@ -24,18 +24,10 @@ export const areCaptionBoundariesLinked = (
 
 export const getGroupText = (words: CaptionWord[]) => words.map((word) => word.text).join(' ')
 
-export type CaptionGap = {
-  id: string
-  start: number
-  end: number
-  duration: number
-  previousGroupId: string
-  nextGroupId: string
-}
-
 export type GroupBoundaryEditMode = 'linked' | 'independent'
 
 type NormalizeGroupTimingOptions = {
+  breakRanges?: Array<{ start: number; end: number }>
   linkAdjacent?: boolean
 }
 
@@ -44,11 +36,33 @@ type GroupBoundaryEditOptions = {
   snapTolerance?: number
 }
 
+const normalizeBoundaryRanges = (ranges: Array<{ start: number; end: number }> = []) =>
+  ranges
+    .map((range) => ({
+      start: roundCaptionTime(Math.max(0, Math.min(range.start, range.end))),
+      end: roundCaptionTime(Math.max(0, Math.max(range.start, range.end))),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+
+const getLinkedEndBeforeBreak = (
+  start: number,
+  linkedEnd: number,
+  breakRanges: Array<{ start: number; end: number }>,
+) => {
+  const firstBreak = breakRanges.find((range) => range.start > start && range.start < linkedEnd)
+  if (firstBreak) return firstBreak.start
+
+  const containingBreak = breakRanges.find((range) => start >= range.start && start < range.end && range.end < linkedEnd)
+  return containingBreak?.end ?? linkedEnd
+}
+
 export const normalizeGroupTimings = (
   groups: CaptionGroup[],
   options: NormalizeGroupTimingOptions = {},
 ): CaptionGroup[] => {
   const linkAdjacent = options.linkAdjacent ?? true
+  const breakRanges = normalizeBoundaryRanges(options.breakRanges)
   const groupsWithSafeStarts = groups.map((group) => ({
     ...group,
     start: Math.max(0, getSafeTime(group.start, 0)),
@@ -58,7 +72,8 @@ export const normalizeGroupTimings = (
     return groupsWithSafeStarts.map((group, index) => {
       const next = groupsWithSafeStarts[index + 1]
       const requestedEnd = getSafeTime(group.end, group.start)
-      const end = next ? next.start : requestedEnd
+      const linkedEnd = next ? next.start : requestedEnd
+      const end = next ? getLinkedEndBeforeBreak(group.start, linkedEnd, breakRanges) : requestedEnd
 
       return {
         ...group,
@@ -169,28 +184,6 @@ const setIndependentGroupBoundary = (
   return normalizeGroupTimings(nextGroups, { linkAdjacent: false })
 }
 
-export const getCaptionGaps = (
-  groups: CaptionGroup[],
-  minDuration = timingNudgeStep,
-): CaptionGap[] =>
-  groups.flatMap((group, index) => {
-    const next = groups[index + 1]
-    if (!next) return []
-
-    const start = roundCaptionTime(group.end)
-    const end = roundCaptionTime(next.start)
-    const duration = roundCaptionTime(end - start)
-    if (duration < minDuration) return []
-
-    return [{
-      id: `caption_gap_${group.id}__${next.id}`,
-      start,
-      end,
-      duration,
-      previousGroupId: group.id,
-      nextGroupId: next.id,
-    }]
-  })
 
 export const nudgeGroupStartBoundary = (
   groups: CaptionGroup[],

@@ -3,6 +3,28 @@
 This catalog tracks shared UI components and reusable feature presentation
 patterns.
 
+## Styling
+
+### Shared UI Tailwind Utilities
+
+- Layer: shared UI utility
+- Location: `apps/web/src/shared/ui`
+- Purpose: Provide reusable Tailwind class constants and the local `cx`
+  class-name combiner for common buttons, dialogs, panels, caption rows, and
+  timeline host structure. The workbench uses this map for the dark app body,
+  command toolbar, timeline action bar, WaveSurfer shell, and bottom
+  transport/speed selector.
+- Public API: `ui` style map and `cx(...classes)`.
+- Used by: Workbench screen, top bar, settings, caption editor, CapCut dialogs,
+  source-cut panels, WaveSurfer host components.
+- Use when: A presentational pattern repeats across components and should not
+  be copy-pasted as ad hoc class strings.
+- Do not use for: Business logic, dynamic WaveSurfer plugin state, or domain
+  decisions.
+- Related: `apps/web/src/index.css`, which now only imports Tailwind, defines
+  theme color/shadow tokens, and contains the WaveSurfer `::part(...)` bridge
+  that cannot be expressed as normal React markup.
+
 ## Components
 
 ### CaptionWorkbench
@@ -40,7 +62,8 @@ patterns.
   project cards, manual project path fallback, dry-run summary, and patch
   action.
 - Public API: Local agent status, project summaries, selected path, patch
-  summary/error state, and action callbacks.
+  summary/error state, including media/video/audio/caption counts, and action
+  callbacks.
 - Used by: Caption workbench screen.
 - Use when: The workbench needs to inspect, dry-run, or patch a local CapCut
   project without exporting JSON manually.
@@ -80,28 +103,19 @@ patterns.
 - Do not use for: Timeline-map mutation, draft writes, or ffmpeg/API calls.
 - Related: [CapCut Cut Export Plan](../capcut-cut-export-plan.md).
 
-### CaptionGapPanel
-
-- Layer: feature view
-- Location:
-  `apps/web/src/features/caption-workbench/ui/CaptionGapPanel.tsx`
-- Purpose: Render the selected subtitle-only gap between two caption groups and
-  offer an action to relink captions across that gap.
-- Public API: Selected `CaptionGap`, close callback, relink callback.
-- Used by: Caption workbench screen.
-- Use when: The workbench needs to explain that a timeline range keeps media
-  but hides caption display.
-- Do not use for: Skip-zone deletion, media cuts, or group timing mutation.
-- Related: [Caption Domain](modules.md#caption-domain).
-
 ### TopBar
 
 - Layer: pattern
 - Location: `apps/web/src/components/TopBar.tsx`
-- Purpose: Render primary file/transcription/cache/save/export actions and the
-  settings and CapCut import popover triggers.
-- Public API: Capability flags, settings content, SRT/CapCut manifest export
-  callbacks, and action callbacks.
+- Purpose: Render primary source upload, cache, save, and export actions plus
+  the settings and CapCut import popover triggers. The toolbar follows the current
+  dark command-bar direction: import/load actions on the left, undo/redo
+  centered with absolute positioning on desktop, and settings/save/export on
+  the right. Export opens a dropdown for SRT, cut JSON, and direct CapCut patch
+  actions.
+- Public API: Capability flags, settings content, cache/source load callbacks,
+  audio-or-video source upload callback, save callback, SRT/CapCut manifest
+  export callbacks, and CapCut import/patch callbacks.
 - Used by: Caption workbench.
 - Use when: Rendering the editor command bar.
 - Do not use for: Cache/transcription decision logic.
@@ -111,10 +125,11 @@ patterns.
 
 - Layer: feature view
 - Location: `apps/web/src/components/SettingsPanel.tsx`
-- Purpose: Render caption rule controls, language hint, and compact stats.
-- Public API: `language`, `stats`, `settings`, `onLanguageChange`, `onChange`.
+- Purpose: Render language hint, legacy empty-zone controls, and compact stats.
+- Public API: `language`, `stats`, `settings`, optional `variant`,
+  `onLanguageChange`, `onChange`.
 - Used by: Caption workbench settings popover.
-- Use when: Editing caption grouping parameters.
+- Use when: Editing non-row caption preferences.
 - Do not use for: Applying or persisting grouping settings.
 - Related: [Regroup Captions workflow](../product/workflows.md#regroup-captions).
 
@@ -124,10 +139,20 @@ patterns.
 - Location: `apps/web/src/components/WaveSurferTimeline.tsx`
 - Purpose: Render the DOM host structure for the WaveSurfer timeline: shared
   time axis, clean waveform lane with editable skip overlays, and caption region
-  lane. Temporary range actions are rendered inside WaveSurfer Regions owned by
-  the timeline model.
-- Public API: `audioUrl` and three container refs owned by the workbench
-  WaveSurfer model.
+  lane inside the dark timeline shell. Internal horizontal scrollbars are
+  visually hidden, and the whole timeline surface forwards horizontal wheel
+  gestures to the WaveSurfer model so blank space around the lanes remains
+  scrollable. The host adds top/bottom fades over the full-height time grid, but
+  does not own any media timing. A single shared hover guide is rendered above
+  all lanes so hovering the waveform or caption lane shows the same timestamp
+  line across the full timeline surface. The minimap host is rendered as a
+  separate bottom row after the caption lane, using WaveSurfer Minimap's own
+  `container` option plus a transparent control layer for dragging the visible
+  viewport or selecting a range to zoom into. The hosted WaveSurfer instances
+  render continuous waveforms rather than bar-style peaks. Temporary range
+  actions are rendered inside WaveSurfer Regions owned by the timeline model.
+- Public API: `audioUrl`, the timeline surface ref, and WaveSurfer container
+  refs owned by the workbench WaveSurfer model.
 - Used by: Caption workbench timeline.
 - Use when: The workbench needs the plugin-backed media timeline layout.
 - Do not use for: Creating WaveSurfer instances, mutating group timings, or
@@ -155,13 +180,17 @@ patterns.
 - Layer: feature view
 - Location: `apps/web/src/components/CaptionEditor.tsx`
 - Purpose: Render the compact caption group list, timing inputs, text edits, and
-  row actions, including document-like Enter split, Backspace merge events, and
-  selected-row scroll alignment. The controller passes only caption groups that
-  are currently visible after the active skip-zone mask; hidden groups remain in
-  source state. Pending transcription rows are read-only loading placeholders
-  until the related chunk returns words.
+  hover-only split action, including document-like Enter split, Backspace merge
+  events, and selected-row scroll alignment. Long row text is clipped under a
+  right-side gradient fade that expands on hover so the scissors action remains
+  readable without permanently crowding the list. The controller passes only
+  caption groups that are currently visible after the active skip-zone mask;
+  hidden groups remain in source state. Pending transcription rows are read-only
+  loading placeholders until the related chunk returns words. Draft text edits
+  expose an inline `Update groups` / `Revert` action bar instead of forcing a
+  regroup on every keystroke. The header owns the `maxChars` wrapping control.
 - Public API: `groups`, optional `totalGroups`, selection,
-  text/timing/cursor-split/merge/play callbacks.
+  `maxChars`, draft state, text/timing/cursor-split/merge/split callbacks.
 - Used by: Caption workbench right rail.
 - Use when: Editing caption groups as rows.
 - Do not use for: Owning split/merge/timing rules.

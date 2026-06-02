@@ -8,14 +8,18 @@
 - Trigger: User selects an audio or video file.
 - Preconditions: Web app is open.
 - Steps:
-  1. Web app creates an object URL for playback.
-  2. Audio service computes the file fingerprint.
-  3. Storage service checks transcription cache for fingerprint/language.
-  4. Workbench either keeps the current matching transcript or clears stale
+  1. If the selected source is a video file, the media conversion client asks
+     the local API to extract the first audio stream into a 96k MP3 editor
+     audio file. Audio files skip this step.
+  2. Web app creates an object URL for the working audio file.
+  3. Audio service computes the working audio fingerprint.
+  4. Storage service checks transcription cache for fingerprint/language.
+  5. Workbench either keeps the current matching transcript or clears stale
      editor state.
 - Result: Source media is staged and cache availability is visible.
-- Failure states: Fingerprint generation fails; user can still transcribe but
-  cache behavior may be unavailable.
+- Failure states: Video audio extraction fails, the source has no readable
+  audio stream, or fingerprint generation fails. If fingerprinting fails, the
+  user can still transcribe but cache behavior may be unavailable.
 - Related domain concepts: SourceMedia, TranscriptionCache, SavedProject.
 
 ### Load Cached Transcription
@@ -105,16 +109,43 @@
 ### Regroup Captions
 
 - Actor: User.
-- Trigger: User clicks `Regroup` after changing caption rules.
+- Trigger: User changes caption rules or clicks `Regroup`.
 - Preconditions: Editor has caption words.
 - Steps:
   1. Caption domain normalizes grouping settings.
-  2. Caption domain rebuilds groups from current words.
-  3. Workbench replaces group state and preserves selection if possible.
+  2. Caption domain rebuilds groups from current words using character-based
+     wrapping. Active skip-zone gaps are passed as hard boundaries so captions
+     do not link across removed timeline ranges.
+  3. Workbench replaces group state and preserves selection if possible. If a
+     caption text draft is pending, the workbench asks the user to apply or
+     revert it before rebuilding from the committed word layer.
 - Result: Caption groups reflect current rules.
 - Failure states: No words available; group count may be unchanged if settings
   do not change grouping boundaries.
 - Related domain concepts: GroupingSettings, CaptionWord, CaptionGroup.
+
+### Edit Caption Text Draft
+
+- Actor: User.
+- Trigger: User edits caption text, splits with `Enter`, or merges with
+  `Backspace`.
+- Preconditions: At least one caption group exists.
+- Steps:
+  1. Caption editor writes row text, split, and merge changes into a staged
+     caption draft instead of regrouping on every keypress.
+  2. Workbench disables export, transcription, alignment, and project save
+     actions that require committed caption state.
+  3. User clicks `Update groups` to apply the draft or `Revert` to discard it.
+  4. Caption domain applies the staged text edits to the word layer, then
+     rebuilds groups once through the current character-wrap settings and
+     active skip-zone boundaries.
+  5. Workbench marks the affected caption range dirty for later MFA alignment.
+- Result: Text editing behaves like a document draft while the durable editor
+  state remains words plus generated groups.
+- Failure states: Draft is empty or matches committed groups; applying may
+  produce different group boundaries because current grouping settings are
+  authoritative.
+- Related domain concepts: CaptionWord, CaptionGroup, GroupingSettings.
 
 ### Align Caption Timings
 
@@ -193,9 +224,12 @@
 - Actor: User.
 - Trigger: User opens `Patch CapCut`, selects a scanned local project or enters
   a manual project path, then runs dry-run or patch.
-- Preconditions: CapCut is closed; the draft has the supported simple shape:
-  one primary video track, one source segment, optional one text track, no
-  overlays or transitions.
+- Preconditions: CapCut is closed; the draft uses supported track types
+  (`video`, `audio`, and optional `text`), and media segments use `speed=1`.
+  Existing text tracks may contain subtitle or plain text materials because the
+  patcher replaces them with the editor's normalized caption layer. Transitions
+  and other dedicated timeline track types remain outside the supported patch
+  shape.
 - Steps:
   1. Optional local CapCut agent scans the standard project root and returns
      project summaries. If disabled or unavailable, the user enters a project
@@ -203,16 +237,21 @@
   2. Workbench builds the patch manifest in memory from current captions and
      kept ranges.
   3. Patcher inspects root and nested timeline draft files.
-  4. Patcher converts manifest kept ranges into consecutive CapCut target
-     segments and preserves original source offsets.
+  4. Patcher intersects manifest kept ranges with every original video/audio
+     segment, then writes remapped target segments while preserving source
+     offsets and track layering.
   5. Captions are clipped to kept ranges, dropped when fully inside removed
      zones, and remapped to the shortened timeline.
-  6. Existing subtitle text track/materials are replaced or default subtitle
-     templates are generated.
-  7. Patch mode creates timestamped backups next to every rewritten file and
+  6. Patcher normalizes the remapped caption stream for CapCut by dropping
+     micro-fragments and trimming overlaps so subtitle segments remain on one
+     text layer.
+  7. Existing text track/materials are replaced or default subtitle templates
+     are generated.
+  8. Patch mode creates timestamped backups next to every rewritten file and
      writes active draft payloads.
 - Result: Reopening the CapCut project shows the video cut around skipped zones
   and captions placed on the shortened timeline.
 - Failure states: Unsupported draft shape, CapCut keeps files locked, malformed
-  manifest, or a patch that would remove the entire timeline.
+  manifest, a patch that would remove the entire timeline, or captions too short
+  to survive export cleanup.
 - Related domain concepts: CaptionGroup, EmptyZoneCut, CapCutDraft.

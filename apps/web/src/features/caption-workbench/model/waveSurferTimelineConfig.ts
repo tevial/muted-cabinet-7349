@@ -17,31 +17,25 @@ export const playbackSpeedConfig = {
 
 export const waveformLaneOptions = {
   height: 88,
-  waveColor: '#c4d4cf',
-  progressColor: '#14927f',
-  cursorColor: '#173f39',
+  waveColor: '#16777e',
+  progressColor: '#2ac1cd',
+  cursorColor: '#ffffffcc',
   cursorWidth: 2,
-  barWidth: 2,
-  barGap: 2,
-  barRadius: 2,
   normalize: true,
 }
 
 export const captionLaneOptions = {
   height: 72,
-  waveColor: '#edf7f4',
-  progressColor: '#d7eee8',
-  cursorColor: '#173f39',
+  waveColor: 'rgba(22, 119, 126, 0.18)',
+  progressColor: 'rgba(42, 193, 205, 0.24)',
+  cursorColor: '#ffffffcc',
   cursorWidth: 2,
-  barWidth: 2,
-  barGap: 2,
-  barRadius: 2,
   normalize: true,
 }
 
 export const captionRegionColors = {
-  default: 'rgba(223, 243, 238, 0.9)',
-  selected: 'rgba(20, 146, 127, 0.84)',
+  default: 'rgba(157, 73, 54, 0.96)',
+  selected: 'rgba(146, 61, 42, 0.98)',
 }
 
 export const formatTimelineLabel = (seconds: number) => {

@@ -1,18 +1,7 @@
 import type { AlignmentResult } from '../../contracts/captions'
 import { flowLog, flowWarn, summarizeFile } from '../../shared/observability/flowLogger'
 import { apiBase } from '../api/apiConfig'
-
-const readApiError = async (response: Response, fallback: string) => {
-  const message = await response.text()
-  if (!message) return fallback
-
-  try {
-    const parsed = JSON.parse(message) as { detail?: unknown }
-    return typeof parsed.detail === 'string' ? parsed.detail : message
-  } catch {
-    return message
-  }
-}
+import { readApiErrorMessage } from '../api/errors'
 
 export class AlignmentRequestError extends Error {
   status: number
@@ -60,7 +49,7 @@ export const alignFileSegment = async (
   })
 
   if (!response.ok) {
-    const message = await readApiError(response, 'MFA alignment failed.')
+    const message = await readApiErrorMessage(response, 'MFA alignment failed.')
     flowWarn('api: mfa alignment error', {
       status: response.status,
       message,

@@ -42,13 +42,15 @@ integrations, tools, and other public non-UI surfaces.
 
 - Type: domain module
 - Location: `apps/web/src/domain/captions`
-- Purpose: Own deterministic caption rules, timing normalization, grouping,
-  subtitle-only caption-gap detection, empty-zone calculations, SRT export,
-  CapCut patch manifest generation, and transcription ingest.
+- Purpose: Own deterministic caption rules, character-wrap grouping with
+  optional skip-zone break ranges, timing normalization, word-layer text
+  editing, detached-boundary empty space, empty-zone calculations, SRT
+  export, CapCut patch manifest generation, and transcription ingest.
 - Public API: `groupWords`, `ingestTranscription`, `normalizeGroupTimings`,
-  `setGroupBoundary`, `getCaptionGaps`, `rebuildGroupTiming`, `exportSrt`,
+  `setGroupBoundary`, `rebuildGroupTiming`, `exportSrt`,
   `getEmptyZoneCuts`, `buildCapCutPatchManifest`, `sanitizeCaptionWords`,
-  `applyAlignedWordsToGroup`, grouping defaults.
+  `applyAlignedWordsToGroup`, `applyGroupTextEditToWords`,
+  `applyCaptionGroupDraftToWords`, grouping defaults.
 - Depends on: Caption contracts only.
 - Used by: Caption workbench feature, storage normalization, UI formatting.
 - Use when: Transforming caption words/groups or exporting captions.
@@ -67,6 +69,23 @@ integrations, tools, and other public non-UI surfaces.
 - Use when: Uploading source media to the local API.
 - Do not use for: Grouping words or mutating editor state.
 - Related: [Fresh Transcription workflow](../product/workflows.md#fresh-transcription).
+
+### Media Conversion Client
+
+- Type: integration service
+- Location: `apps/web/src/services/media/mediaConversionClient.ts`
+- Purpose: Detect selected video sources and ask the local API to extract a
+  compact MP3 editor audio file before the workbench creates playback URLs,
+  fingerprints, transcription requests, or alignment requests.
+- Public API: `isVideoSourceFile`, `extractEditorAudioFromVideo`,
+  `prepareSourceMediaFile`.
+- Depends on: Shared API config, shared API error parsing, flow logger.
+- Used by: Caption workbench feature upload flow.
+- Use when: Browser source-media selection needs to normalize video input into
+  the same audio-file pipeline used by existing editor workflows.
+- Do not use for: Caption grouping, persistence, WaveSurfer orchestration, or
+  CapCut draft parsing.
+- Related: [Upload Source Media workflow](../product/workflows.md#upload-source-media).
 
 ### Alignment Client
 
@@ -196,6 +215,23 @@ integrations, tools, and other public non-UI surfaces.
 - Do not use for: Domain export formatting.
 - Related: [Export SRT workflow](../product/workflows.md#export-srt).
 
+### Shared UI Styling
+
+- Type: UI utility module
+- Location: `apps/web/src/shared/ui`
+- Purpose: Own reusable Tailwind class constants and the `cx` helper for
+  composing conditional class names without reintroducing large CSS files.
+- Public API: `ui`, `cx`.
+- Depends on: Tailwind theme tokens declared in `apps/web/src/index.css`.
+- Used by: Shared components and caption workbench feature views.
+- Use when: Reusing a common visual pattern such as buttons, panels, dialogs,
+  compact row actions, timeline host structure, or form controls.
+- Do not use for: Caption domain rules, feature state transitions, or direct
+  WaveSurfer instance orchestration.
+- Notes: `apps/web/src/index.css` remains as the Tailwind entry and token file;
+  its only component-level selectors are WaveSurfer `::part(...)` bridge rules
+  for plugin shadow/part styling.
+
 ### CapCut Patch Manifest Export
 
 - Type: domain exporter
@@ -230,10 +266,14 @@ integrations, tools, and other public non-UI surfaces.
 - Type: feature model
 - Location: `apps/web/src/features/caption-workbench/model/useWaveSurferTimeline.ts`
 - Purpose: Own WaveSurfer instances, official plugins, playback commands,
-  playback-speed control, caption region reconciliation, two-lane scroll/zoom synchronization,
+  playback-speed control, caption region reconciliation, whole-surface
+  horizontal wheel scrolling, two-lane scroll/zoom synchronization,
+  synchronized zoom-event feedback guards, separate Minimap container wiring
+  with viewport drag and range-select-to-zoom controls,
   editable manual/automatic empty-zone skip regions, non-destructive caption
   region masking, temporary range selection actions, empty-zone skip playback,
   overlapping skip-zone normalization, detected-silence tuning controls,
+  stale/duplicate plugin-region cleanup after skip-zone merges,
   selected-region scroll alignment, skip-aware group loop ranges, loop
   invalidation when skip edits hide or split the active segment, and
   keyboard-compatible audition commands. Synchronization is time-based rather
@@ -259,7 +299,8 @@ integrations, tools, and other public non-UI surfaces.
   can be widened or narrowed before confirmation. Supports local loudness
   normalization, RMS threshold, minimum duration, and speech-edge guard
   settings. The minimum duration is enforced after boundary tuning as well as
-  during initial detection.
+  during initial detection. Default tuning starts at `RMS 0.02`, `Min gap 0.2s`,
+  and `Guard 0.12s`.
 - Public API: `detectSilenceCuts`, `defaultSilenceDetectionSettings`,
   `normalizeSilenceDetectionSettings`.
 - Depends on: Browser Web Audio `AudioBuffer` and caption timing formatting.
@@ -276,6 +317,8 @@ integrations, tools, and other public non-UI surfaces.
 - Location: `apps/web/src/features/caption-workbench/model/waveSurferTimelineConfig.ts`
 - Purpose: Provide the single source of truth for WaveSurfer visual options,
   zoom limits, playback-speed limits, plugin labels, and caption region colors.
+  Waveform lanes use WaveSurfer's continuous waveform rendering instead of
+  bar-style rendering so speech shape remains inspectable while editing.
 - Public API: `timelineZoomConfig`, `waveformLaneOptions`,
   `captionLaneOptions`, `captionRegionColors`, `formatTimelineLabel`,
   `formatZoomLabel`, `playbackSpeedConfig`, `formatPlaybackRateLabel`.
@@ -312,7 +355,10 @@ integrations, tools, and other public non-UI surfaces.
 - Depends on: Python standard library.
 - Used by: FastAPI routes.
 - Use when: API needs server-side caption grouping/export behavior.
-- Do not use for: Browser editor state or localStorage behavior.
+- Do not use for: Browser editor state or localStorage behavior. Keep grouping
+  parity with the browser caption domain: current rules wrap by `maxChars` and
+  never split a word to satisfy the character limit. The browser layer adds
+  active skip-zone break ranges when rebuilding editor groups.
 - Related: [Architecture Context](../product/architecture-context.md).
 
 ### API Transcription Service
@@ -337,13 +383,34 @@ integrations, tools, and other public non-UI surfaces.
   caption domain.
 - Related: [Fresh Transcription workflow](../product/workflows.md#fresh-transcription).
 
+### API Audio Processing Helpers
+
+- Type: backend utility service
+- Location: `apps/api/app/audio_processing.py`
+- Purpose: Own shared `ffmpeg`/`ffprobe` operations for source-video audio
+  extraction, request-local audio segment rendering, and duration probing.
+- Public API: `has_ffmpeg`, `probe_duration`, `extract_editor_audio`,
+  `create_mono_wav_segment`, `AudioProcessingError`.
+- Depends on: Local `ffmpeg`/`ffprobe` binaries.
+- Used by: Source media extraction route, API transcription service, and MFA
+  alignment backend.
+- Use when: Backend code needs deterministic media preparation before handing
+  audio to WaveSurfer-facing browser workflows, transcription providers, or
+  alignment tools.
+- Do not use for: Browser state, caption grouping, or CapCut draft rewriting.
+- Notes: Editor audio extraction currently returns a 96k MP3 from the first
+  source audio stream so direct video uploads follow the same browser pipeline
+  as manually prepared audio files.
+- Related: [Upload Source Media workflow](../product/workflows.md#upload-source-media).
+
 ### API CapCut Draft Patcher
 
 - Type: API domain module
 - Location: `apps/api/app/capcut_draft.py`
 - Purpose: Inspect supported CapCut draft folders, preview or apply direct
-  timeline cuts, remap captions after skip-zone removal, replace subtitle
-  tracks, and create timestamped backups before writes.
+  timeline cuts, remap all source video/audio segments against kept ranges,
+  replace text tracks, sanitize the final caption stream for CapCut's one-layer
+  subtitle behavior, and create timestamped backups before writes.
 - Public API: `inspect_capcut_draft`, `preview_capcut_patch`,
   `patch_capcut_draft`, `TimeRange`, `CaptionPatch`, `CapCutDraftError`.
 - Depends on: Python standard library and CapCut draft JSON shape.
@@ -377,6 +444,7 @@ integrations, tools, and other public non-UI surfaces.
 - Purpose: Keep transcription provider integration and any remote API key on the
   local server.
 - Public API: `POST /api/transcribe`, `POST /api/regroup`, `POST /api/export/srt`,
+  `POST /api/media/extract-audio`,
   `POST /api/transcribe/segment`, `POST /api/transcribe/segments`,
   `POST /api/capcut/inspect`, `POST /api/capcut/patch-dry-run`,
   `POST /api/capcut/patch`, `GET /api/capcut/local-agent`,

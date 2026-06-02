@@ -11,3 +11,4 @@ tmp
 apps/api/.cache
 test-audio.mp3
 transcribe-debug-output.txt
+.codex-run-logs

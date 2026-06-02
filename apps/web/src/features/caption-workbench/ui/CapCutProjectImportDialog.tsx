@@ -4,6 +4,8 @@ import type {
   CapCutLocalAgentStatus,
   CapCutProjectSummary,
 } from '../../../services/capcut/capcutClient'
+import { cx } from '../../../shared/ui/classNames'
+import { ui } from '../../../shared/ui/styles'
 
 type CapCutProjectImportDialogProps = {
   agent?: CapCutLocalAgentStatus
@@ -35,66 +37,67 @@ export function CapCutProjectImportDialog({
   if (!isOpen) return null
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className={ui.modalBackdrop} role="presentation" onMouseDown={onClose}>
       <section
-        className="capcut-patch-dialog"
+        className={ui.dialog}
         role="dialog"
         aria-modal="true"
         aria-label="Load CapCut project"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="popover-title-row">
+        <div className={ui.popoverTitleRow}>
           <div>
             <strong>Load CapCut project</strong>
-            <p className="capcut-patch-note">Import timeline structure and render per-track audio stems.</p>
+            <p className={ui.noteText}>Import timeline structure and render per-track audio stems.</p>
           </div>
-          <button className="icon-button" type="button" title="Close" onClick={onClose}>
+          <button className={ui.iconButton} type="button" title="Close" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
 
-        <div className="capcut-agent-row">
-          <span className="capcut-agent-status">
+        <div className={ui.agentRow}>
+          <span className={ui.agentStatus}>
             {agent?.enabled ? 'Local Agent on' : 'Manual project path'}
           </span>
-          <button className="ghost-button" type="button" disabled={isLoadingProjects || isBusy} onClick={onRefreshProjects}>
+          <button className={ui.ghostButton} type="button" disabled={isLoadingProjects || isBusy} onClick={onRefreshProjects}>
             <RefreshCcw size={16} />
             {isLoadingProjects ? 'Scanning' : 'Refresh'}
           </button>
         </div>
 
         {projects.length ? (
-          <div className="capcut-project-list" aria-label="CapCut projects">
+          <div className={ui.projectList} aria-label="CapCut projects">
             {projects.map((project) => (
               <button
-                className={`capcut-project-card${project.projectPath === projectPath ? ' is-selected' : ''}`}
+                className={cx(ui.projectCard, project.projectPath === projectPath && ui.projectCardSelected)}
                 key={project.id}
                 type="button"
                 onClick={() => onProjectPathChange(project.projectPath)}
               >
                 {project.coverUrl ? (
-                  <img src={project.coverUrl} alt="" />
+                  <img className={ui.projectThumb} src={project.coverUrl} alt="" />
                 ) : (
-                  <span className="capcut-project-placeholder">
+                  <span className={ui.projectPlaceholder}>
                     <FileVideo size={18} />
                   </span>
                 )}
                 <span>
-                  <strong>{project.name}</strong>
-                  <em>{project.tracks.length} tracks · {project.duration?.toFixed(1) ?? '0.0'}s</em>
+                  <strong className={ui.projectName}>{project.name}</strong>
+                  <em className={ui.projectMeta}>{project.tracks.length} tracks · {project.duration?.toFixed(1) ?? '0.0'}s</em>
                 </span>
               </button>
             ))}
           </div>
         ) : (
-          <p className="capcut-patch-note">
+          <p className={ui.noteText}>
             {isLoadingProjects ? 'Scanning local CapCut projects...' : 'No local CapCut projects were found.'}
           </p>
         )}
 
-        <label className="field">
+        <label className={ui.field}>
           Project path
           <input
+            className={ui.fieldInput}
             type="text"
             value={projectPath}
             placeholder="/Users/.../Movies/CapCut/User Data/Projects/com.lveditor.draft/..."
@@ -102,13 +105,13 @@ export function CapCutProjectImportDialog({
           />
         </label>
 
-        {error ? <p className="capcut-patch-error">{error}</p> : null}
+        {error ? <p className={ui.errorText}>{error}</p> : null}
 
-        <div className="capcut-patch-actions">
-          <button className="ghost-button" type="button" onClick={onClose}>
+        <div className={ui.actionsRow}>
+          <button className={ui.ghostButton} type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary-button" type="button" disabled={isBusy || !projectPath.trim()} onClick={onImport}>
+          <button className={ui.primaryButton} type="button" disabled={isBusy || !projectPath.trim()} onClick={onImport}>
             {isBusy ? 'Importing' : 'Import project'}
           </button>
         </div>

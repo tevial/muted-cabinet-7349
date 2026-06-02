@@ -5,30 +5,25 @@ import {
   FileAudio,
   FileJson,
   FolderOpen,
-  RefreshCcw,
   Save,
-  Scissors,
   Settings as SettingsIcon,
   Redo2,
   Undo2,
-  WandSparkles,
   X,
 } from 'lucide-react'
+
+import { ui } from '../shared/ui/styles'
 
 type TopBarProps = {
   canExport: boolean
   canExportCutManifest: boolean
   canRedo: boolean
   canSaveProject: boolean
-  canTranscribe: boolean
   canUndo: boolean
   hasCachedTranscript: boolean
-  isTranscribing: boolean
   settingsContent: ReactNode
   onFileChange: (file: File) => void
   onLoadCachedTranscript: () => void
-  onTranscribe: () => void
-  onRegroup: () => void
   onSaveProject: () => void
   onExportCapCutManifest: () => void
   onExportSrt: () => void
@@ -43,15 +38,11 @@ export function TopBar({
   canExportCutManifest,
   canRedo,
   canSaveProject,
-  canTranscribe,
   canUndo,
   hasCachedTranscript,
-  isTranscribing,
   settingsContent,
   onFileChange,
   onLoadCachedTranscript,
-  onTranscribe,
-  onRegroup,
   onSaveProject,
   onExportCapCutManifest,
   onExportSrt,
@@ -60,131 +51,157 @@ export function TopBar({
   onRedo,
   onUndo,
 }: TopBarProps) {
+  const [isExportOpen, setIsExportOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const canOpenExport = canExport || canExportCutManifest
+  const runExportAction = (action: () => void) => {
+    setIsExportOpen(false)
+    action()
+  }
 
   return (
-    <header className="topbar">
-      <div className="brand">
-        <div className="brand-mark">
-          <Scissors size={18} />
-        </div>
-        <div>
-          <span className="brand-title">CapCut Caption</span>
-          <span className="brand-subtitle">word-level caption editor</span>
-        </div>
-      </div>
-
-      <nav className="toolbar" aria-label="Primary actions">
-        <label className="ghost-button" htmlFor="source-file" title="Choose audio or video source">
-          <FileAudio size={17} />
-          Upload
-          <input
-            id="source-file"
-            className="source-file-input"
-            type="file"
-            accept="audio/*,video/*"
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0]
-              if (file) onFileChange(file)
-              event.currentTarget.value = ''
-            }}
-          />
-        </label>
-        <button className="ghost-button" type="button" disabled={!canTranscribe || isTranscribing} onClick={onTranscribe}>
-          <WandSparkles size={17} />
-          {isTranscribing ? 'Transcribing' : 'Transcribe'}
-        </button>
-        {hasCachedTranscript ? (
-          <button className="ghost-button" type="button" disabled={isTranscribing} onClick={onLoadCachedTranscript}>
+    <header className={ui.topbar}>
+      <nav className={ui.toolbar} aria-label="Primary actions">
+        <div className={ui.toolbarGroup}>
+          <button
+            className={ui.toolbarPrimaryButton}
+            type="button"
+            title="Load a local CapCut project through the Local Agent"
+            onClick={onOpenCapCutImport}
+          >
+            <FolderOpen size={17} />
+            Load CapCut
+          </button>
+          <label className={ui.toolbarPrimaryButton} htmlFor="source-file" title="Choose audio or video source">
+            <FileAudio size={17} />
+            Upload
+            <input
+              id="source-file"
+              className={ui.sourceFileInput}
+              type="file"
+              accept="audio/*,video/*"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                if (file) onFileChange(file)
+                event.currentTarget.value = ''
+              }}
+            />
+          </label>
+          <button
+            className={ui.toolbarSecondaryButton}
+            type="button"
+            disabled={!hasCachedTranscript}
+            onClick={onLoadCachedTranscript}
+          >
             <Database size={17} />
             Load Cache
           </button>
-        ) : null}
-        <button
-          className="ghost-button"
-          type="button"
-          title="Load a local CapCut project through the Local Agent"
-          onClick={onOpenCapCutImport}
-        >
-          <FolderOpen size={17} />
-          Load CapCut
-        </button>
-        <button
-          className="ghost-button"
-          type="button"
-          title="Rebuild caption groups from current words and caption rules"
-          onClick={onRegroup}
-        >
-          <RefreshCcw size={17} />
-          Regroup
-        </button>
-        <button className="icon-button" type="button" title="Undo" disabled={!canUndo} onClick={onUndo}>
-          <Undo2 size={16} />
-        </button>
-        <button className="icon-button" type="button" title="Redo" disabled={!canRedo} onClick={onRedo}>
-          <Redo2 size={16} />
-        </button>
-        <button className="ghost-button" type="button" disabled={!canSaveProject} onClick={onSaveProject}>
-          <Save size={17} />
-          Save Project
-        </button>
-        <div className="toolbar-popover-anchor">
-          <button
-            className="ghost-button"
-            type="button"
-            aria-expanded={isSettingsOpen}
-            aria-controls="caption-settings-popover"
-            onClick={() => setIsSettingsOpen((current) => !current)}
-          >
-            <SettingsIcon size={17} />
-            Settings
+        </div>
+
+        <div className={ui.toolbarCenterActions} aria-label="History actions">
+          <button className={ui.toolbarIconButton} type="button" title="Undo" disabled={!canUndo} onClick={onUndo}>
+            <Undo2 size={16} />
           </button>
-          {isSettingsOpen ? (
-            <div
-              id="caption-settings-popover"
-              className="settings-popover"
-              role="dialog"
-              aria-label="Caption settings"
+          <button className={ui.toolbarIconButton} type="button" title="Redo" disabled={!canRedo} onClick={onRedo}>
+            <Redo2 size={16} />
+          </button>
+        </div>
+
+        <div className={ui.toolbarActions}>
+          <div className={ui.toolbarPopoverAnchor}>
+            <button
+              className={ui.toolbarIconButton}
+              type="button"
+              title="Settings"
+              aria-label="Settings"
+              aria-expanded={isSettingsOpen}
+              aria-controls="caption-settings-popover"
+              onClick={() => {
+                setIsExportOpen(false)
+                setIsSettingsOpen((current) => !current)
+              }}
             >
-              <div className="popover-title-row">
-                <strong>Settings</strong>
+              <SettingsIcon size={17} />
+            </button>
+            {isSettingsOpen ? (
+              <div
+                id="caption-settings-popover"
+                className={ui.settingsPopover}
+                role="dialog"
+                aria-label="Caption settings"
+              >
+                <div className={ui.popoverTitleRow}>
+                  <strong>Settings</strong>
+                  <button
+                    className={ui.iconButton}
+                    type="button"
+                    title="Close settings"
+                    onClick={() => setIsSettingsOpen(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                {settingsContent}
+              </div>
+            ) : null}
+          </div>
+
+          <button className={ui.toolbarSecondaryButton} type="button" disabled={!canSaveProject} onClick={onSaveProject}>
+            <Save size={17} />
+            Save Project
+          </button>
+
+          <div className={ui.toolbarPopoverAnchor}>
+            <button
+              className={ui.toolbarPrimaryButton}
+              type="button"
+              disabled={!canOpenExport}
+              aria-expanded={isExportOpen}
+              aria-controls="caption-export-menu"
+              onClick={() => {
+                setIsSettingsOpen(false)
+                setIsExportOpen((current) => !current)
+              }}
+            >
+              <Download size={17} />
+              Export
+            </button>
+            {isExportOpen ? (
+              <div id="caption-export-menu" className={ui.toolbarMenu} role="menu" aria-label="Export actions">
                 <button
-                  className="icon-button"
+                  className={ui.toolbarMenuItem}
                   type="button"
-                  title="Close settings"
-                  onClick={() => setIsSettingsOpen(false)}
+                  role="menuitem"
+                  disabled={!canExport}
+                  onClick={() => runExportAction(onExportSrt)}
                 >
-                  <X size={16} />
+                  <Download size={16} />
+                  Export to SRT
+                </button>
+                <button
+                  className={ui.toolbarMenuItem}
+                  type="button"
+                  role="menuitem"
+                  disabled={!canExportCutManifest}
+                  onClick={() => runExportAction(onExportCapCutManifest)}
+                >
+                  <FileJson size={16} />
+                  Export cut JSON
+                </button>
+                <button
+                  className={ui.toolbarMenuItem}
+                  type="button"
+                  role="menuitem"
+                  disabled={!canExportCutManifest}
+                  onClick={() => runExportAction(onOpenCapCutPatch)}
+                >
+                  <FolderOpen size={16} />
+                  Patch CapCut
                 </button>
               </div>
-              {settingsContent}
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
-        <button className="primary-button" type="button" disabled={!canExport} onClick={onExportSrt}>
-          <Download size={17} />
-          Export SRT
-        </button>
-        <button
-          className="ghost-button"
-          type="button"
-          disabled={!canExportCutManifest}
-          title="Export JSON manifest for CapCut draft patching"
-          onClick={onExportCapCutManifest}
-        >
-          <FileJson size={17} />
-          Export Cut JSON
-        </button>
-        <button
-          className="ghost-button"
-          type="button"
-          disabled={!canExportCutManifest}
-          title="Patch a local CapCut project"
-          onClick={onOpenCapCutPatch}
-        >
-          <FolderOpen size={17} />
-          Patch CapCut
-        </button>
       </nav>
     </header>
   )

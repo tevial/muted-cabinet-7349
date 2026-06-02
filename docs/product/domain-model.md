@@ -46,10 +46,14 @@
 ### GroupingSettings
 
 - Purpose: Deterministic caption grouping rules.
-- Key fields: `maxWords`, `minDuration`, `maxChars`, `pauseThreshold`,
-  `trimEmptyZones`, `emptyZoneThreshold`.
+- Key fields: `maxChars`, `trimEmptyZones`, `emptyZoneThreshold`. `maxWords`,
+  `minDuration`, and `pauseThreshold` are retained in contracts for legacy saved
+  settings compatibility, but current grouping wraps by character count.
 - Relationships: Used to ingest transcription and rebuild caption groups.
-- Invariants: Settings are normalized before use.
+- Invariants: Settings are normalized before use. A word is never split to
+  satisfy `maxChars`; if it does not fit, the whole word starts the next group.
+  Active skip zones are hard grouping boundaries, so groups are not linked
+  across removed timeline ranges.
 - Lifecycle/statuses: default, user-adjusted, persisted.
 - Owned by: caption domain.
 

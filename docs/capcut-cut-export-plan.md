@@ -160,7 +160,9 @@ Sample inspected:
   `draft_info.json.bak` files are byte-identical to `draft_info.json`.
 - Project timing is microsecond-based. `duration: 281466666` means
   `281.466666s`.
-- The draft has one `video` track with one segment.
+- Early samples used one `video` track with one segment; the patcher now treats
+  every source media segment on supported `video` and `audio` tracks as the
+  source of truth and remaps intersections with kept ranges per track.
 - The segment points at `materials.videos[0]` through `material_id`.
 - The source video has `has_audio: true`, so splitting the video segment also
   removes the embedded audio for this simple project shape.
@@ -322,8 +324,9 @@ For captions, prefer a template-clone strategy:
 
 - Patch the original test project folder after creating timestamped backups of
   every file that will be rewritten.
-- Patch only one simple project shape first: one primary video track with
-  embedded audio.
+- Patch the supported project shape first: `video` and `audio` tracks with
+  `speed=1` segments, plus optional text tracks that are replaced by the
+  editor's normalized caption layer.
 - Convert seconds to CapCut's microsecond-based timing.
 - Preserve media source offsets while closing timeline gaps.
 - Write patched timeline payloads to root `draft_info.json`, nested timeline
@@ -341,8 +344,8 @@ For captions, prefer a template-clone strategy:
 
 ### Phase 5: Broader Project Support
 
-- Support separate audio tracks, multi-clip timelines, overlays, linked effects,
-  transitions, and projects with existing captions.
+- Support source-cut restoration, linked effects as first-class editable
+  objects, transitions, and broader CapCut-version compatibility checks.
 - Add compatibility checks by CapCut version/platform.
 - Keep a project backup and rollback path mandatory.
 

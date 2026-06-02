@@ -29,9 +29,9 @@ export const defaultSilenceDetectionSettings: SilenceDetectionSettings = {
   adaptiveNormalization: true,
   adaptiveWindowDuration: 1.2,
   mergeDuration: 0.2,
-  minDuration: 0.8,
+  minDuration: 0.2,
   relativeThreshold: 0.16,
-  rmsThreshold: 0.008,
+  rmsThreshold: 0.02,
   speechPadding: 0.12,
   windowDuration: 0.025,
 }

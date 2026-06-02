@@ -3,8 +3,8 @@
 ## Problem
 
 CapCut auto-captions produce sentence-sized subtitle blocks, while the target
-editing style needs short 1-3 word captions with precise timing and easy manual
-adjustment.
+editing style needs short character-wrapped captions with precise timing and
+easy manual adjustment.
 
 ## Audience
 

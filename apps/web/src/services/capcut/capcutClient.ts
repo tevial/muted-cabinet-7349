@@ -7,6 +7,7 @@ import type {
 } from '../../contracts/capcut'
 import { flowLog, flowWarn } from '../../shared/observability/flowLogger'
 import { apiBase } from '../api/apiConfig'
+import { readApiErrorMessage } from '../api/errors'
 
 export type CapCutLocalAgentStatus = {
   enabled: boolean
@@ -48,8 +49,17 @@ export type CapCutPatchSummary = {
   inputDuration: number
   outputDuration: number
   removedDuration: number
+  mediaSegments?: number
   videoSegments: number
+  audioSegments?: number
   captionSegments: number
+  captionSanitizer?: {
+    inputSegments: number
+    outputSegments: number
+    droppedShortSegments: number
+    trimmedOverlaps: number
+    droppedAfterOverlapTrim: number
+  }
   keptRanges: Array<{ start: number; end: number; duration: number }>
   backups: string[]
   filesWritten: string[]
@@ -80,20 +90,6 @@ const asCapCutPatchPayload = (projectPath: string, manifest: CapCutPatchManifest
   captions: manifest.captions,
 })
 
-const readErrorMessage = async (response: Response, fallback: string) => {
-  const message = await response.text()
-  if (!message) return fallback
-
-  try {
-    const parsed = JSON.parse(message) as { detail?: unknown }
-    if (typeof parsed.detail === 'string') return parsed.detail
-  } catch {
-    return message
-  }
-
-  return message
-}
-
 const postJson = async <T>(path: string, payload: unknown, fallbackError: string): Promise<T> => {
   const response = await fetch(`${apiBase}${path}`, {
     method: 'POST',
@@ -102,7 +98,7 @@ const postJson = async <T>(path: string, payload: unknown, fallbackError: string
   })
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, fallbackError))
+    throw new Error(await readApiErrorMessage(response, fallbackError))
   }
 
   return response.json() as Promise<T>
@@ -120,7 +116,7 @@ export const listCapCutProjects = async (limit = 120): Promise<CapCutProjectList
   const response = await fetch(`${apiBase}/api/capcut/projects?limit=${limit}`)
 
   if (!response.ok) {
-    const message = await readErrorMessage(response, 'CapCut project scan failed.')
+    const message = await readApiErrorMessage(response, 'CapCut project scan failed.')
     flowWarn('api: capcut projects error', { status: response.status, message })
     throw new Error(message)
   }
@@ -172,7 +168,7 @@ export const loadCapCutStemFile = async (stem: CapCutAudioStem): Promise<File> =
   const response = await fetch(stem.url)
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, 'CapCut audio stem download failed.'))
+    throw new Error(await readApiErrorMessage(response, 'CapCut audio stem download failed.'))
   }
 
   const blob = await response.blob()
