@@ -2238,6 +2238,10 @@ export const useWaveSurferTimeline = ({
           lastSkippedCutEndRef.current = undefined
           return
         }
+        if (!mainWaveSurfer.isPlaying()) {
+          lastSkippedCutEndRef.current = undefined
+          return
+        }
 
         const cut = maskedEmptyZoneCutsRef.current.find((item) => {
           if (time < item.start || time >= item.end) return false
