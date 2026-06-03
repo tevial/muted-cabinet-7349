@@ -181,8 +181,11 @@
 - Trigger: User selects a group and uses keyboard or input controls.
 - Preconditions: Source media and caption groups exist.
 - Steps:
-  1. User selects a group in timeline or block list.
-  2. Playback controller loops or plays the selected segment.
+  1. User selects a group in timeline or block list, or places the playhead on
+     the full timeline surface.
+  2. Playback controller loops or plays the selected segment. Full-timeline
+     playback may start from a playhead placed inside a skip zone, but it jumps
+     to the end of that skip zone before audio starts.
   3. Caption domain adjusts group boundaries and adjacent group boundary where
      needed.
   4. Workbench writes normalized groups into editor state.

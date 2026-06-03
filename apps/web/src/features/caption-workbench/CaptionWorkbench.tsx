@@ -695,14 +695,12 @@ export function CaptionWorkbench() {
     detectSilentSkipRegions,
     detectedSilenceAdjustment,
     hasDetectedSilenceDraft,
+    interactionContainerRef,
     isPlaying,
     isReady: isTimelineReady,
     keptTimelineRanges,
     loopedGroupId,
-    minimapControlRef,
     minimapContainerRef,
-    minimapSelectionRef,
-    minimapViewportRef,
     playbackRate,
     resetPlaybackPosition,
     selectedSkipRegionId,
@@ -715,9 +713,6 @@ export function CaptionWorkbench() {
     silenceDetectionSettings,
     startLoopGroup,
     stopPlayback,
-    timelineContainerRef,
-    timelineHoverGuideRef,
-    timelineHoverLabelRef,
     timelineSurfaceRef,
     togglePlayback,
     waveformContainerRef,
@@ -2328,15 +2323,10 @@ export function CaptionWorkbench() {
       hasCachedTranscript={hasCachedTranscript}
       audioUrl={audioUrl}
       captionContainerRef={captionContainerRef}
+      interactionContainerRef={interactionContainerRef}
       isTimelineReady={isTimelineReady}
-      minimapControlRef={minimapControlRef}
       minimapContainerRef={minimapContainerRef}
-      minimapSelectionRef={minimapSelectionRef}
-      minimapViewportRef={minimapViewportRef}
       timelineSurfaceRef={timelineSurfaceRef}
-      timelineContainerRef={timelineContainerRef}
-      timelineHoverGuideRef={timelineHoverGuideRef}
-      timelineHoverLabelRef={timelineHoverLabelRef}
       timelineZoomConfig={timelineZoomConfig}
       playbackRate={playbackRate}
       playbackRateLabel={formatPlaybackRateLabel(playbackRate)}

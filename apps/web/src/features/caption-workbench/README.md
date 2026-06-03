@@ -34,12 +34,17 @@ This feature contains:
   `WaveSurferTimeline`, which only renders DOM hosts and decorative fades for
   the model-owned WaveSurfer instances. The CapCut import summary stays pinned
   to the top of the dark timeline stack, while the WaveSurfer host fills the
-  remaining stage space and centers the fixed-height lanes inside it. The
-  WaveSurfer host also renders one shared hover guide above all lanes, while
-  the timeline model computes its timestamp from the main WaveSurfer instance.
+  remaining stage space and centers the fixed-height lanes inside it. Each
+  WaveSurfer host owns its hover cursor through the official Hover plugin, so
+  hover timestamps stay tied to the same wrapper that owns scroll and zoom.
+  The main waveform owns ticks and labels through the official Timeline plugin
+  with `insertPosition: 'beforebegin'`; do not mirror those ticks through a
+  custom background grid or external transformed wrapper. Blank space is covered
+  by an invisible WaveSurfer interaction host so the official Zoom and Hover
+  plugins still own pointer-anchored interactions outside the visible lanes.
   The WaveSurfer Minimap plugin renders into its own bottom host after the
-  caption lane and has a workbench control layer for dragging the visible
-  viewport or range-selecting a zoom target.
+  caption lane. The plugin owns its own compact waveform, visible-viewport
+  overlay, and click/drag seek behavior.
 
 Rules:
 
@@ -97,6 +102,9 @@ Rules:
   makes the active loop segment hidden or split, stop the loop instead of
   replaying a stale range. Ordinary caption timing nudges should retarget the
   loop to the group's new visible range rather than stopping playback.
+- The playhead may be positioned anywhere on the full timeline surface,
+  including inside skip zones. Skip-zone jumping happens only when playback
+  starts or reaches the skipped range.
 - Keep undo/redo in the feature controller. History stores editor snapshots
   across words, groups, grouping settings, selected group, and skip-zone state.
 - The Caption groups header owns the `maxChars` control because it directly
@@ -165,19 +173,38 @@ Rules:
   own view/model boundary, not by directly calling each other.
 - Prefer official WaveSurfer plugins over custom timeline drawing. Custom media
   timeline behavior needs a documented reason that a plugin cannot support it.
-- Keep WaveSurfer lane synchronization time-based. Use WaveSurfer `scroll`
-  event visible times, the official `setScrollTime()` API, measured rendered
-  pixels-per-second, and deferred `requestAnimationFrame` zoom sync so the top
-  waveform lane, shared time axis, and caption region lane do not drift while
-  the Zoom plugin settles scroll.
+- Keep WaveSurfer lane synchronization on official WaveSurfer timing APIs.
+  Geometry math uses one canonical rendered timeline width:
+  `max(ceil(duration * minPxPerSec), viewportWidth)`, so absolutely positioned
+  region content cannot inflate DOM `scrollWidth` and change pixels-per-second.
+  Scroll following uses the `scroll` event's `visibleStartTime` when available
+  and the official `setScrollTime()` API for follower lanes. During playback,
+  sync followers from the main lane on `timeupdate` too, because WaveSurfer's
+  `autoScroll` can move the main wrapper before follower `scroll` events arrive.
+- Do not synthesize or forward wheel events for zoom. Use real WaveSurfer
+  hosts, including the invisible interaction host for blank space, so the
+  official Zoom plugin receives the original event target and pointer position.
+- Keep Minimap on the official plugin path. Do not add a transparent control
+  layer, custom viewport overlay, or range-select-to-zoom on top of it unless a
+  future version of WaveSurfer exposes that behavior through plugin APIs. If a
+  follower lane needs live playhead preview while the minimap is being dragged,
+  subscribe to the Minimap plugin's official `drag` event and mirror the
+  relative position into follower WaveSurfer instances with `setTime()`. Leave
+  the actual main-lane seek to the Minimap plugin.
+- Do not seek from the outer timeline surface on pointer-up. Visible waveform
+  lanes and the blank interaction layer already emit WaveSurfer `interaction`
+  events, while caption/skip/source-cut overlays emit Region events. Adding a
+  second surface-level seek path makes region selection move the playhead and
+  can auto-scroll the viewport away from the selected group.
 - Clamp zoom-out to the rendered fit-to-width value for the active WaveSurfer
   instance. The official Zoom plugin allows this value even when it is below
   the editor's nominal minimum, so synced lanes must share that effective
   minimum instead of keeping the caption lane and top timeline on different
   scales.
-- Keep timeline background grid spacing as the exact rendered pixels-per-second
-  value. Do not round or apply a visual minimum to the grid step because that
-  creates cumulative drift from the official Timeline plugin labels at low zoom.
+- Keep Timeline plugin ticks/labels inside the main WaveSurfer wrapper. Do not
+  add a separate CSS grid, custom tick renderer, or transformed external
+  timeline wrapper because it creates a second time geometry that can drift from
+  the waveform.
 - Keep waveform amplitude stable across zoom/redraw. If `normalize` is enabled,
   compute one decoded-audio `maxPeak` and pass it to every synchronized
   WaveSurfer lane; otherwise per-canvas normalization can make the same audio

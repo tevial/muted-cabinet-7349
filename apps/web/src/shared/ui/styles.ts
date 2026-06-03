@@ -142,24 +142,14 @@ export const ui = {
 
   wavesurferTimeline:
     'relative grid min-h-[520px] min-w-0 flex-[1_1_auto] content-center gap-0 overflow-hidden',
-  timelineGridFadeTop:
+  timelineFadeTop:
     'pointer-events-none absolute inset-x-0 top-0 z-[1] h-[34%] bg-gradient-to-b from-[#262626] to-transparent',
-  timelineGridFadeBottom:
+  timelineFadeBottom:
     'pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[34%] bg-gradient-to-t from-[#262626] to-transparent',
-  timelineHoverGuide:
-    'pointer-events-none absolute bottom-0 top-7 left-0 z-[30] w-px bg-white/35 opacity-0 transition-opacity duration-75',
-  timelineHoverLabel:
-    'absolute left-1/2 top-[35%] -translate-x-1/2 rounded-[3px] bg-[#173f39] px-1 py-0.5 text-[11px] font-bold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.24)]',
-  wavesurferTimeAxis: 'relative z-[2] min-h-7 overflow-hidden text-[#6c6c6c]',
+  wavesurferInteractionHost: 'absolute inset-0 z-[1] min-w-0 overflow-hidden',
   wavesurferLane: 'relative z-[2] min-w-0 overflow-hidden',
   wavesurferMinimapLane: 'relative z-[2] min-h-7 min-w-0 overflow-hidden',
-  wavesurferMinimapHost: 'min-h-7 min-w-0 pointer-events-none opacity-70',
-  wavesurferMinimapControl:
-    'absolute inset-0 z-[3] cursor-crosshair touch-none [&.is-panning]:cursor-grabbing [&.is-panning_.wavesurfer-minimap-viewport]:cursor-grabbing',
-  wavesurferMinimapViewport:
-    'absolute top-0 bottom-0 block box-border rounded border border-accent-dark/70 bg-accent/[0.12] pointer-events-auto cursor-grab',
-  wavesurferMinimapSelection:
-    'absolute top-0 bottom-0 hidden box-border rounded border border-accent-ink/75 bg-accent-ink/[0.12] pointer-events-none',
+  wavesurferMinimapHost: 'min-h-7 min-w-0 opacity-70',
   wavesurferHost: 'min-h-[inherit] min-w-0 empty:min-h-[inherit]',
 
   sectionTitleRow: 'flex h-14 items-center justify-between gap-3 border-b border-[#141414] px-3 py-2',

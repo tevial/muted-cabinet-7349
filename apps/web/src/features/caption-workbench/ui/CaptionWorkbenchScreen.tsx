@@ -70,15 +70,10 @@ type CaptionWorkbenchScreenProps = {
   hasDetectedSilenceDraft: boolean
   audioUrl?: string
   captionContainerRef: RefObject<HTMLDivElement | null>
+  interactionContainerRef: RefObject<HTMLDivElement | null>
   isTimelineReady: boolean
-  minimapControlRef: RefObject<HTMLDivElement | null>
   minimapContainerRef: RefObject<HTMLDivElement | null>
-  minimapSelectionRef: RefObject<HTMLDivElement | null>
-  minimapViewportRef: RefObject<HTMLDivElement | null>
   timelineSurfaceRef: RefObject<HTMLElement | null>
-  timelineContainerRef: RefObject<HTMLDivElement | null>
-  timelineHoverGuideRef: RefObject<HTMLDivElement | null>
-  timelineHoverLabelRef: RefObject<HTMLSpanElement | null>
   timelineZoomConfig: {
     minPixelsPerSecond: number
     maxPixelsPerSecond: number
@@ -189,15 +184,10 @@ export function CaptionWorkbenchScreen({
   hasDetectedSilenceDraft,
   audioUrl,
   captionContainerRef,
+  interactionContainerRef,
   isTimelineReady,
-  minimapControlRef,
   minimapContainerRef,
-  minimapSelectionRef,
-  minimapViewportRef,
   timelineSurfaceRef,
-  timelineContainerRef,
-  timelineHoverGuideRef,
-  timelineHoverLabelRef,
   playbackRate,
   silenceAdjustmentConfig,
   silenceDetectionSettingConfig,
@@ -431,15 +421,9 @@ export function CaptionWorkbenchScreen({
             <WaveSurferTimeline
               audioUrl={audioUrl}
               captionContainerRef={captionContainerRef}
-              minimapControlRef={minimapControlRef}
+              interactionContainerRef={interactionContainerRef}
               minimapContainerRef={minimapContainerRef}
-              minimapSelectionRef={minimapSelectionRef}
-              minimapViewportRef={minimapViewportRef}
               timelineSurfaceRef={timelineSurfaceRef}
-              timelineContainerRef={timelineContainerRef}
-              timelineHoverGuideRef={timelineHoverGuideRef}
-              timelineHoverLabelRef={timelineHoverLabelRef}
-              timelineGridStepPx={zoomLevel}
               waveformContainerRef={waveformContainerRef}
             />
             <div className={ui.timelineTransport} aria-label="Timeline playback controls">

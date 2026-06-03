@@ -82,37 +82,30 @@
 }
 
 @layer components {
-  .wavesurfer-time-axis [part='timeline-wrapper'] {
+  .waveform-lane ::part(timeline-wrapper) {
     position: relative;
   }
 
-  .wavesurfer-time-axis [part='timeline'] {
+  .waveform-lane ::part(timeline) {
     height: 28px !important;
+    color: #6c6c6c;
   }
 
-  .wavesurfer-time-axis [part*='timeline-notch'] {
+  .waveform-lane ::part(timeline-notch) {
     color: #6c6c6c;
     font-weight: 700;
-  }
-
-  .wavesurfer-time-axis [part='timeline-wrapper'],
-  .wavesurfer-lane ::part(wrapper) {
-    background-image: repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent calc(var(--timeline-grid-step, 96px) - 1px),
-      rgba(255, 255, 255, 0.08) calc(var(--timeline-grid-step, 96px) - 1px),
-      rgba(255, 255, 255, 0.08) var(--timeline-grid-step, 96px)
-    );
   }
 
   .wavesurfer-minimap-host [part='minimap'] {
     min-height: 28px;
     background: transparent;
+    cursor: pointer;
   }
 
   .wavesurfer-minimap-host [part='minimap-overlay'] {
-    display: none;
+    background: rgba(255, 255, 255, 0.08);
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
   }
 
   .wavesurfer-lane ::part(scroll) {
@@ -124,6 +117,22 @@
     display: none;
     width: 0;
     height: 0;
+  }
+
+  .wavesurfer-lane ::part(hover),
+  .wavesurfer-interaction-host ::part(hover) {
+    z-index: 20;
+    border-left-color: rgba(255, 255, 255, 0.35) !important;
+  }
+
+  .wavesurfer-lane ::part(hover-label),
+  .wavesurfer-interaction-host ::part(hover-label) {
+    border-radius: 3px;
+    background: #173f39 !important;
+    color: #ffffff !important;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.24);
   }
 
   .waveform-lane {
@@ -138,6 +147,7 @@
     border: 1px solid rgba(187, 118, 101, 0.34);
     border-radius: 6px;
     box-shadow: none;
+    contain: layout paint;
     color: #ffffff;
     overflow: hidden;
     transition:
@@ -154,9 +164,11 @@
     display: flex;
     height: 100%;
     width: 100%;
+    max-width: 100%;
     min-width: 0;
     align-items: center;
     box-sizing: border-box;
+    contain: layout paint;
     overflow: hidden;
     padding: 0;
     color: #ffffff;
@@ -171,6 +183,8 @@
     border: 1px solid transparent;
     border-radius: 6px;
     background: transparent !important;
+    contain: layout paint;
+    overflow: hidden;
   }
 
   .waveform-lane ::part(region-handle) {

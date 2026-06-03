@@ -635,8 +635,9 @@ The remaining custom logic is intentionally domain/control code:
 - mapping `CaptionGroup` records to WaveSurfer Regions
 - committing `region-updated` events back to caption timing
 - keeping two WaveSurfer visual lanes synchronized
-- translating the external Timeline plugin wrapper with the main waveform scroll
-  so the shared time axis stays aligned at every zoom level
+- placing TimelinePlugin inside the main WaveSurfer wrapper with
+  `insertPosition: 'beforebegin'` so ticks/labels use WaveSurfer's own scroll
+  and redraw lifecycle
 - scrolling the caption list and timeline to the same `selectedGroupId`
 - preserving the project shortcut rule that wheel zoom requires
   `Ctrl`/`Command`

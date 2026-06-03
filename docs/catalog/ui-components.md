@@ -137,18 +137,26 @@ patterns.
 
 - Layer: feature view
 - Location: `apps/web/src/components/WaveSurferTimeline.tsx`
-- Purpose: Render the DOM host structure for the WaveSurfer timeline: shared
-  time axis, clean waveform lane with editable skip overlays, and caption region
-  lane inside the dark timeline shell. Internal horizontal scrollbars are
-  visually hidden, and the whole timeline surface forwards horizontal wheel
-  gestures to the WaveSurfer model so blank space around the lanes remains
-  scrollable. The host adds top/bottom fades over the full-height time grid, but
-  does not own any media timing. A single shared hover guide is rendered above
-  all lanes so hovering the waveform or caption lane shows the same timestamp
-  line across the full timeline surface. The minimap host is rendered as a
-  separate bottom row after the caption lane, using WaveSurfer Minimap's own
-  `container` option plus a transparent control layer for dragging the visible
-  viewport or selecting a range to zoom into. The hosted WaveSurfer instances
+- Purpose: Render the DOM host structure for the WaveSurfer timeline: clean
+  waveform lane with the official Timeline plugin inserted by the model,
+  editable skip overlays, caption region lane, and minimap lane inside the dark
+  timeline shell. Internal horizontal scrollbars are visually hidden, and the
+  timeline includes an invisible WaveSurfer interaction host behind the visible
+  lanes so blank-space seek and command/control zoom are still handled by
+  WaveSurfer's own interaction and Zoom plugin math. Timeline ticks/labels are
+  not drawn by this component and are not mirrored through a custom background
+  grid.
+  Hover cursors are rendered by WaveSurfer's official Hover plugin inside each
+  host, including the invisible blank-space host, so hover positioning follows
+  the same scroll wrapper as media rendering. The outer surface only handles
+  non-zoom horizontal wheel panning; playhead seeking must come from WaveSurfer
+  `interaction` events or Region click handlers, not from surface pointer-up
+  events. Playhead placement can land inside skip zones; playback rules skip
+  those zones only when audio starts or reaches them. The host adds top/bottom
+  fades around the WaveSurfer-owned lanes, but does not own any media timing. The
+  minimap host is rendered as a separate bottom row after the caption lane,
+  using WaveSurfer Minimap's own `container` option, built-in viewport overlay,
+  and click/drag seek behavior. The hosted WaveSurfer instances
   render continuous waveforms rather than bar-style peaks. Temporary range
   actions are rendered inside WaveSurfer Regions owned by the timeline model.
 - Public API: `audioUrl`, the timeline surface ref, and WaveSurfer container

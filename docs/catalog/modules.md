@@ -269,17 +269,26 @@ integrations, tools, and other public non-UI surfaces.
 - Purpose: Own WaveSurfer instances, official plugins, playback commands,
   playback-speed control, caption region reconciliation, whole-surface
   horizontal wheel scrolling, two-lane scroll/zoom synchronization,
-  synchronized zoom-event feedback guards, separate Minimap container wiring
-  with viewport drag and range-select-to-zoom controls,
+  synchronized zoom-event feedback guards, official Minimap container wiring
+  with plugin-owned overlay and click/drag seek behavior,
   editable manual/automatic empty-zone skip regions, non-destructive caption
   region masking, temporary range selection actions, empty-zone skip playback,
   overlapping skip-zone normalization, detected-silence tuning controls,
   stale/duplicate plugin-region cleanup after skip-zone merges,
   selected-region scroll alignment, skip-aware group loop ranges, loop
-  invalidation when skip edits hide or split the active segment, and
-  keyboard-compatible audition commands. Synchronization is time-based rather
-  than raw-scroll-pixel-based, and normalized lanes share a decoded-audio
-  `maxPeak` so waveform height remains stable across zoom/redraw.
+  invalidation when skip edits hide or split the active segment, official
+  Timeline plugin ticks inserted inside the main WaveSurfer wrapper with
+  `insertPosition: 'beforebegin'`, and keyboard-compatible audition commands.
+  Synchronization uses a canonical
+  rendered timeline width derived from duration, zoom, and viewport width
+  instead of DOM `scrollWidth`, so region labels and hit targets cannot alter
+  lane geometry. Scroll following uses WaveSurfer `scroll` visible-start times
+  and the official `setScrollTime()` API; playback also resyncs follower lanes
+  from the main lane on `timeupdate` to stay aligned with WaveSurfer
+  `autoScroll`. Minimap drag preview uses the official Minimap `drag` event to
+  mirror playhead time into follower lanes while the plugin still owns the
+  actual main-lane seek. Normalized lanes share a decoded-audio `maxPeak` so
+  waveform height remains stable across zoom/redraw.
 - Public API: `useWaveSurferTimeline`.
 - Depends on: WaveSurfer.js, caption contracts, and caption domain
   formatting/empty-zone rules.
